@@ -6,7 +6,7 @@ import EmployeeDashboard from "./pages/EmployeeDashboard.jsx";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter  basename="/my-react-app">
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/admin" element={<AdminDashboard />} />
