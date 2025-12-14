@@ -7,7 +7,7 @@ import UploadFile from "./pages/UploadFile.jsx";
 
 export default function App() {
   return (
-    <BrowserRouter basename="/">
+    <BrowserRouter basename="/" >
       <Routes>
         <Route path="/" element={<Login />} /> 
         <Route path="/admin" element={<AdminDashboard />} />
