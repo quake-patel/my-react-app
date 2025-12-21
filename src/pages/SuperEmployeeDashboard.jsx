@@ -275,10 +275,7 @@ export default function SuperEmployeeDashboard() {
           <Row gutter={[16, 16]}>
               <Col xs={12} sm={6}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
               <Col xs={12} sm={6}><Statistic title="Target Hours" value={payroll.targetHours} valueStyle={{ fontSize: 16, fontWeight: 500 }} prefix={<ClockCircleOutlined />} /></Col>
-              <Col xs={12} sm={6}><Statistic title="Actual Hours" value={payroll.actualHours.toFixed(2)} valueStyle={{ fontSize: 16, color: "#888" }} /></Col>
-              <Col xs={12} sm={6}><Statistic title="Eligible Hrs" value={payroll.eligibleHours.toFixed(2)} valueStyle={{ fontSize: 16, color: payroll.difference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: 'bold' }} /></Col>
-              <Col xs={24}><div style={{height: 1, background: darkMode ? '#303030' : '#f0f0f0', margin: '8px 0'}} /></Col>
-              <Col xs={12}>
+              <Col xs={12} sm={6}>
                   <Statistic 
                     title="Difference (Eligible - Target)" 
                     value={payroll.difference.toFixed(2)} 
@@ -286,7 +283,7 @@ export default function SuperEmployeeDashboard() {
                     prefix={payroll.difference > 0 ? <PlusOutlined /> : <></>} 
                   />
               </Col>
-              <Col xs={12}>
+              <Col xs={12} sm={6}>
                   <Statistic 
                     title="Leaves" 
                     value={payroll.totalLeaves || 0} 

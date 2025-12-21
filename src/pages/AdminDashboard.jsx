@@ -388,6 +388,9 @@ export default function AdminDashboard() {
     const workingDays = calculateWorkingDays(selectedMonth);
     const targetHours = workingDays * 8;
     
+    // Calculate Leaves Count from records
+    const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
+
     return {
       workingDays,
       targetHours,
@@ -395,7 +398,8 @@ export default function AdminDashboard() {
       difference: eligibleHours - targetHours, // Difference is based on ELIGIBLE hours now
       pendingWeekends,
       eligibleHours, // Added for UI display
-      missingDays
+      missingDays,
+      totalLeaves: missingDays.length + leavesCount
     };
   };
 
@@ -526,15 +530,19 @@ export default function AdminDashboard() {
           <Row gutter={[16, 16]}>
               <Col xs={12} sm={6}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
               <Col xs={12} sm={6}><Statistic title="Target Hours" value={payroll.targetHours} valueStyle={{ fontSize: 16, fontWeight: 500 }} prefix={<ClockCircleOutlined />} /></Col>
-              <Col xs={12} sm={6}><Statistic title="Actual Hours" value={payroll.actualHours.toFixed(2)} valueStyle={{ fontSize: 16, color: "#888" }} /></Col>
-              <Col xs={12} sm={6}><Statistic title="Eligible Hrs" value={payroll.eligibleHours.toFixed(2)} valueStyle={{ fontSize: 16, color: payroll.difference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: 'bold' }} /></Col>
-              <Col xs={24}><div style={{height: 1, background: darkMode ? '#303030' : '#f0f0f0', margin: '8px 0'}} /></Col>
-              <Col xs={24}>
+              <Col xs={12} sm={6}>
                   <Statistic 
                     title="Difference (Eligible - Target)" 
                     value={payroll.difference.toFixed(2)} 
                     valueStyle={{ fontSize: 20, color: payroll.difference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: "bold" }} 
                     prefix={payroll.difference > 0 ? <PlusOutlined /> : <></>} 
+                  />
+              </Col>
+              <Col xs={12} sm={6}>
+                  <Statistic 
+                    title="Leaves" 
+                    value={payroll.totalLeaves || 0} 
+                    valueStyle={{ fontSize: 20, color: "#faad14", fontWeight: "bold" }} 
                   />
               </Col>
               
@@ -557,24 +565,38 @@ export default function AdminDashboard() {
 
               {/* Missing Days / Leaves List */}
               {payroll.missingDays && payroll.missingDays.length > 0 && (
-                <Col span={24} style={{ marginTop: 12, background: darkMode ? "rgba(255, 77, 79, 0.1)" : "#fff1f0", padding: 12, borderRadius: 6, border: "1px dashed #ff4d4f" }}>
-                    <div style={{ fontSize: 13, fontWeight: "bold", color: "#ff4d4f", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                        <ClockCircleOutlined /> Absences / Missing Workdays ({payroll.missingDays.length})
-                    </div>
-                    <div style={{ maxHeight: 200, overflowY: "auto", paddingRight: 4 }}>
-                        {payroll.missingDays.map(dateStr => (
-                            <div key={dateStr} style={{ marginBottom: 8, background: darkMode ? "#000" : "#fff", padding: "8px", borderRadius: 4, border: "1px solid #ff4d4f" }}>
-                                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{dateStr}</div>
-                                {employeeInfo && (
-                                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                       <Button type="default" size="small" onClick={() => handleGrantLeave(dateStr, employeeInfo, false)}>Unpaid</Button>
-                                       <Button type="primary" ghost size="small" style={{ borderColor: '#52c41a', color: '#52c41a' }} onClick={() => handleGrantLeave(dateStr, employeeInfo, true)}>Paid (+8h)</Button>
-                                       <Button type="primary" ghost size="small" danger onClick={() => handleMarkPresent(dateStr, employeeInfo)}>Present (+8h)</Button>
-                                   </div>
-                                )}
+                <Col span={24} style={{ marginTop: 12 }}>
+                    <Collapse size="small" ghost>
+                        <Panel 
+                            header={<span style={{ color: "#ff4d4f", fontWeight: "bold" }}><ClockCircleOutlined /> Absences / Missing Workdays ({payroll.missingDays.length})</span>} 
+                            key="1"
+                        >
+                            <div style={{ maxHeight: 200, overflowY: "auto", paddingRight: 4 }}>
+                                {payroll.missingDays.map(dateStr => (
+                                    <div key={dateStr} style={{ 
+                                        marginBottom: 4, 
+                                        background: darkMode ? "#000" : "#fff", 
+                                        padding: "4px 8px", 
+                                        borderRadius: 4, 
+                                        border: "1px solid #ff4d4f",
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        fontSize: 12
+                                    }}>
+                                        <span style={{ fontWeight: 600 }}>{dateStr}</span>
+                                        {employeeInfo && (
+                                           <div style={{ display: 'flex', gap: 4 }}>
+                                               <Button type="default" size="small" style={{ fontSize: 11, padding: "0 6px", height: 22 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, false)}>Unpaid</Button>
+                                               <Button type="primary" ghost size="small" style={{ borderColor: '#52c41a', color: '#52c41a', fontSize: 11, padding: "0 6px", height: 22 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, true)}>Paid</Button>
+                                               <Button type="primary" ghost size="small" danger style={{ fontSize: 11, padding: "0 6px", height: 22 }} onClick={() => handleMarkPresent(dateStr, employeeInfo)}>Present</Button>
+                                           </div>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
+                        </Panel>
+                    </Collapse>
                 </Col>
               )}
           </Row>
