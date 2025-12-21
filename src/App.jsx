@@ -4,7 +4,8 @@ import Login from "./pages/Login.jsx";
 import AdminDashboard from "./pages/AdminDashboard.jsx";
 import EmployeeDashboard from "./pages/EmployeeDashboard.jsx";
 import UploadFile from "./pages/UploadFile.jsx";
-
+import TeamLeaderDashboard from "./pages/TeamLeaderDashboard.jsx";
+import SuperEmployeeDashboard from "./pages/SuperEmployeeDashboard.jsx";
 export default function App() {
   return (
     <BrowserRouter basename="/my-react-app">
@@ -13,6 +14,8 @@ export default function App() {
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/employee" element={<EmployeeDashboard />} />
         <Route path="/upload" element={<UploadFile  />} />
+        <Route path="/teamleader" element={<TeamLeaderDashboard />} />
+        <Route path="/super-employee" element={<SuperEmployeeDashboard />} />
       </Routes>
     </BrowserRouter>
   );

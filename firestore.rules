@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function for Admin or Super Employee
+    function isStaff() {
+      return request.auth.token.email == "chirag@theawakens.com" 
+          || request.auth.token.email == "jayesh@theawakens.com";
+    }
+
+    match /punches/{docId} {
+      // Admin & Quake: Full Access (Read, Write, Update, Delete)
+      allow read, write: if request.auth != null && isStaff();
+
+      // Employee: Read Only (Updates must go through 'requests' collection)
+      allow read: if request.auth != null
+        && request.auth.token.email == resource.data.email;
+    }
+    
+    match /requests/{requestId} {
+      // Staff can read/write (approve/reject/view all)
+      allow read, write: if request.auth != null && isStaff();
+      
+      // Employees can create requests for themselves
+      allow create: if request.auth != null 
+        && request.auth.token.email == request.resource.data.email;
+        
+      // Employees can read their own requests (to see status)
+      allow read: if request.auth != null 
+        && request.auth.token.email == resource.data.email;
+    }
+
+    match /holidays/{docId} {
+      allow read, write: if request.auth != null && isStaff();
+    }
+  }
+}

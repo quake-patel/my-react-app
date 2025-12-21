@@ -14,8 +14,10 @@ export default function Login() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       message.success("Login successful!");
-      if (email === "admin@company.com") {
+      if (email === "chirag@theawakens.com") {
         navigate("/admin");
+      } else if (email === "jayesh@theawakens.com") {
+        navigate("/super-employee");
       } else {
         navigate("/employee");
       }

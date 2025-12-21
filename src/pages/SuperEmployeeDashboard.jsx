@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Table,
   Empty,
@@ -10,11 +10,13 @@ import {
   ConfigProvider,
   Switch,
   theme,
+  Card,
+  Tag,
+  Space,
   DatePicker,
   Row,
   Col,
-  Statistic,
-  Tag
+  Statistic
 } from "antd";
 import {
   ReloadOutlined,
@@ -22,6 +24,8 @@ import {
   EditOutlined,
   BulbOutlined,
   UploadOutlined,
+  CheckOutlined,
+  CloseOutlined,
   ClockCircleOutlined,
   PlusOutlined
 } from "@ant-design/icons";
@@ -31,7 +35,9 @@ import {
   getDocs,
   query,
   where,
-  addDoc
+  updateDoc,
+  doc,
+  deleteDoc
 } from "firebase/firestore";
 import { signOut, onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -44,7 +50,6 @@ dayjs.extend(isSameOrBefore);
 
 const { darkAlgorithm, defaultAlgorithm } = theme;
 
-// 🎯 DARK MODE COLORS (PURE BLACK)
 const DARK_BG = "#000000";
 const DARK_CARD = "#141414";
 
@@ -55,25 +60,11 @@ const DEFAULT_HOLIDAYS = [
   "2025-10-20", // Diwali (Example)
 ];
 
-const calculateTimes = (times) => {
-  if (!times || times.length === 0) return { inTime: "", outTime: "", totalHours: "" };
-  // Sort times to ensure correct In/Out
-  const sortedTimes = [...times].sort();
-  const inTime = sortedTimes[0];
-  const outTime = sortedTimes[sortedTimes.length - 1];
-  
-  let totalHours = "";
-  try {
-    const [inH, inM] = inTime.split(":").map(Number);
-    const [outH, outM] = outTime.split(":").map(Number);
-    const minutes = outH * 60 + outM - (inH * 60 + inM);
-    totalHours = minutes > 0 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}` : "0:00";
-  } catch {}
-  return { inTime, outTime, totalHours };
-};
 
-export default function EmployeeDashboard() {
+
+export default function SuperEmployeeDashboard() {
   const [records, setRecords] = useState([]);
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [currentRecord, setCurrentRecord] = useState(null);
@@ -96,15 +87,7 @@ export default function EmployeeDashboard() {
     return () => unsub();
   }, [navigate]);
 
-  useEffect(() => {
-    if (userEmail) {
-        fetchMyData();
-        fetchHolidays();
-    }
-  }, [userEmail]); // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  /* ================= FETCH ================= */
-    const fetchHolidays = async () => {
+   const fetchHolidays = async () => {
     try {
       const snap = await getDocs(collection(db, "holidays"));
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -139,7 +122,6 @@ export default function EmployeeDashboard() {
     return workingDays;
   };
 
-  /* ================= CALCULATIONS ================= */
   const getMonthlyPayroll = (employeeRecords) => {
     if (!selectedMonth) return { targetHours: 0, actualHours: 0, workingDays: 0, difference: 0, eligibleHours: 0, missingDays: [], totalLeaves: 0 };
     
@@ -223,6 +205,63 @@ export default function EmployeeDashboard() {
     };
   };
 
+  /* ================= FETCH ================= */
+  const fetchMyData = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const q = query(
+        collection(db, "punches"),
+        where("email", "==", userEmail)
+      );
+      const snap = await getDocs(q);
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      
+      // Sort Descending (Latest Date First)
+      data.sort((a, b) => {
+        const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+        const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+        if (!dateA.isValid()) return 1; 
+        if (!dateB.isValid()) return -1;
+        return dateB.valueOf() - dateA.valueOf();
+      });
+      
+      setRecords(data);
+    } catch {
+      message.error("Failed to fetch data");
+    }
+    setLoading(false);
+  }, [userEmail]);
+
+  const fetchRequests = React.useCallback(async () => {
+    try {
+      const snap = await getDocs(collection(db, "requests"));
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      
+      // Sort Requests Descending (Latest Date First)
+      data.sort((a, b) => {
+        const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+        const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+        if (!dateA.isValid()) return 1; 
+        if (!dateB.isValid()) return -1;
+        return dateB.valueOf() - dateA.valueOf();
+      });
+
+      setRequests(data);
+    } catch {
+      console.error("Failed to fetch requests");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (userEmail) {
+      fetchMyData();
+      fetchRequests();
+      fetchHolidays();
+    }
+  }, [userEmail, fetchMyData, fetchRequests]);
+
+
+
   /* ================= RENDER HELPERS ================= */
   const renderPayrollStats = (payroll) => (
       <div style={{ 
@@ -270,77 +309,106 @@ export default function EmployeeDashboard() {
       </div>
   );
 
-  /* ================= FETCH ================= */
-  const fetchMyData = async () => {
-    setLoading(true);
-    try {
-      const q = query(
-        collection(db, "punches"),
-        where("email", "==", userEmail)
-      );
-      const snap = await getDocs(q);
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      
-      // Sort Descending (Latest Date First)
-      data.sort((a, b) => {
-        // Parse with flexible format (non-strict) to handle 1-1-2025 vs 01-01-2025
-        const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
-        const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
-        if (!dateA.isValid()) return 1; 
-        if (!dateB.isValid()) return -1;
-        return dateB.valueOf() - dateA.valueOf();
-      });
-      
-      setRecords(data);
-    } catch {
-      message.error("Failed to fetch data");
-    }
-    setLoading(false);
-  };
-
   /* ================= LOGOUT ================= */
   const handleLogout = async () => {
     await signOut(auth);
     navigate("/");
   };
 
-  /* ================= REQUEST ================= */
-  const openRequest = (record) => {
+  /* ================= HELPERS ================= */
+  const calculateTimes = (times) => {
+    if (!times || times.length === 0) return { inTime: "", outTime: "", totalHours: "" };
+    // Sort times
+    const sortedTimes = [...times].sort();
+    const inTime = sortedTimes[0];
+    const outTime = sortedTimes[sortedTimes.length - 1];
+    
+    let totalHours = "";
+    try {
+      const [inH, inM] = inTime.split(":").map(Number);
+      const [outH, outM] = outTime.split(":").map(Number);
+      const minutes = outH * 60 + outM - (inH * 60 + inM);
+      totalHours = minutes > 0 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}` : "0:00";
+    } catch {}
+    return { inTime, outTime, totalHours };
+  };
+
+  /* ================= EDIT (Self) ================= */
+  const openEdit = (record) => {
     setCurrentRecord(record);
     form.setFieldsValue({
+      inTime: record.inTime,
+      outTime: record.outTime,
       punchTimes: (record.punchTimes || []).join(", "),
-      reason: "",
     });
     setEditOpen(true);
   };
 
-  const handleRequestUpdate = async (values) => {
+  const handleUpdate = async (values) => {
+    // Make sure we calculate from the *Punch Times*, not just assume manual input is correct
     const punchTimes = values.punchTimes.split(",").map((t) => t.trim()).filter(Boolean);
     const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
 
+    // Validate if calculation worked (simple check)
     if (!inTime || !outTime) {
-      message.error("Could not calculate In/Out times. Check format (HH:MM)");
+         message.error("Invalid punch times format");
+         return;
+    }
+
+    const [inH, inM] = inTime.split(":").map(Number);
+    const [outH, outM] = outTime.split(":").map(Number);
+    const minutes = outH * 60 + outM - (inH * 60 + inM);
+
+    if (minutes < 0) {
+      message.error("Calculated Out Time is before In Time");
       return;
     }
 
-    await addDoc(collection(db, "requests"), {
-      punchId: currentRecord.id,
-      email: userEmail,
-      date: currentRecord.date,
-      originalInTime: currentRecord.inTime,
-      originalOutTime: currentRecord.outTime,
+    await updateDoc(doc(db, "punches", currentRecord.id), {
       inTime,
       outTime,
       punchTimes,
       numberOfPunches: punchTimes.length,
       hours: totalHours,
-      reason: values.reason,
-      status: "pending",
-      createdAt: new Date().toISOString()
     });
 
-    message.success("Request sent to Super Employee");
+    message.success("Punch updated (times auto-calculated)");
     setEditOpen(false);
+    fetchMyData();
+  };
+
+  /* ================= REQUESTS ================= */
+  const handleApproveRequest = async (req) => {
+    try {
+      // Update the original punch
+      await updateDoc(doc(db, "punches", req.punchId), {
+        inTime: req.inTime,
+        outTime: req.outTime,
+        punchTimes: req.punchTimes,
+        numberOfPunches: req.numberOfPunches,
+        hours: req.hours,
+      });
+
+      // Delete the request
+      await deleteDoc(doc(db, "requests", req.id));
+
+      message.success("Request approved and updated");
+      fetchRequests();
+      // If we updated our own record, refresh self data
+      if (req.email === userEmail) fetchMyData();
+    } catch {
+      message.error("Failed to approve request");
+    }
+  };
+
+  const handleRejectRequest = async (id) => {
+    try {
+      await deleteDoc(doc(db, "requests", id));
+      message.success("Request rejected");
+      fetchRequests();
+    } catch {
+      message.error("Failed to reject request");
+    }
   };
 
   /* ================= COMPUTED DATA ================= */
@@ -380,7 +448,6 @@ export default function EmployeeDashboard() {
       return combined;
   }, [records, payroll, selectedMonth, userEmail]);
 
-  /* ================= TABLE ================= */
   const columns = [
     { title: "Date", dataIndex: "date" },
     { title: "Punches", dataIndex: "numberOfPunches" },
@@ -410,8 +477,8 @@ export default function EmployeeDashboard() {
       render: (_, r) => {
         if (r.isMissing || r.isLeave) return null;
         return (
-            <Button type="link" icon={<EditOutlined />} onClick={() => openRequest(r)}>
-            Request Correction
+            <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(r)}>
+            Edit
             </Button>
         );
       },
@@ -429,10 +496,15 @@ export default function EmployeeDashboard() {
           padding: 24,
         }}
       >
-        {/* HEADER */}
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: 16,
+          }}
+        >
            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-               <h2 style={{ color: darkMode ? "#fff" : "#000", margin: 0 }}>My Punch Records</h2>
+               <h2 style={{ color: darkMode ? "#fff" : "#000", margin: 0 }}>Super Employee Dashboard</h2>
                <DatePicker.MonthPicker 
                   value={selectedMonth} 
                   onChange={setSelectedMonth} 
@@ -449,10 +521,9 @@ export default function EmployeeDashboard() {
               checkedChildren="Dark"
               unCheckedChildren="Light"
             />
-            <Button icon={<ReloadOutlined />} onClick={() => { fetchMyData(); fetchHolidays(); }}>
+            <Button icon={<ReloadOutlined />} onClick={() => { fetchMyData(); fetchRequests(); fetchHolidays(); }}>
               Refresh
             </Button>
-            {/* Upload Page Button */}
             <Button
               type="primary"
               icon={<UploadOutlined />}
@@ -469,47 +540,80 @@ export default function EmployeeDashboard() {
         {/* PAYROLL STATS */}
         {renderPayrollStats(payroll)}
 
-        {/* TABLE */}
-        {dataSource.length === 0 ? (
-          <Empty />
-        ) : (
-          <Table
-            bordered
-            loading={loading}
-            columns={columns}
-            dataSource={dataSource}
-            rowKey="id"
-            rowClassName={(record) => {
-                if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";
-                if (record.isLeave) {
-                   if (record.leaveType === 'Paid') return darkMode ? "dark-paid-leave-row" : "light-paid-leave-row"; 
-                   return darkMode ? "dark-unpaid-leave-row" : "light-unpaid-leave-row";
-                }
-                return "";
-            }}
-            onRow={(record) => {
-                let bg = "";
-                if (record.isMissing) {
-                    bg = darkMode ? "rgba(255, 77, 79, 0.1)" : "#fff1f0";
-                    return { style: { background: bg } };
-                }
-                if (record.isLeave) {
-                   if (record.leaveType === 'Paid') bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
-                   else bg = darkMode ? "#333" : "#fafafa";
-                   return { style: { background: bg } };
-                }
-                return {};
-            }}
-            style={{
-              background: darkMode ? DARK_CARD : "#fff",
-            }}
-          />
+        {/* REQUESTS SECTION */}
+        {requests.length > 0 && (
+          <Card 
+            title="Pending Requests" 
+            style={{ marginBottom: 24, background: darkMode ? DARK_CARD : "#fff" }}
+            bodyStyle={{ padding: 0 }}
+          >
+             <Table
+                dataSource={requests}
+                rowKey="id"
+                pagination={false}
+                columns={[
+                  { title: "Employee", dataIndex: "email" },
+                  { title: "Date", dataIndex: "date" },
+                  { title: "Requested In", dataIndex: "inTime", render: (t, r) => <Space><Tag>New: {t}</Tag><Tag color="red">Old: {r.originalInTime}</Tag></Space> },
+                  { title: "Requested Out", dataIndex: "outTime", render: (t, r) => <Space><Tag>New: {t}</Tag><Tag color="red">Old: {r.originalOutTime}</Tag></Space> },
+                  { title: "Reason", dataIndex: "reason" },
+                  { 
+                    title: "Action", 
+                    render: (_, r) => (
+                      <Space>
+                        <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApproveRequest(r)}>Approve</Button>
+                        <Button danger size="small" icon={<CloseOutlined />} onClick={() => handleRejectRequest(r.id)}>Reject</Button>
+                      </Space>
+                    ) 
+                  }
+                ]}
+             />
+          </Card>
         )}
+
+        {/* MY RECORDS */}
+        <Card title="My Punch Records" bordered={false} style={{ background: darkMode ? DARK_CARD : "#fff" }}>
+            {records.length === 0 ? (
+            <Empty />
+            ) : (
+            <Table
+                bordered
+                loading={loading}
+                columns={columns}
+                dataSource={dataSource}
+                rowKey="id"
+                rowClassName={(record) => {
+                    if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";
+                    if (record.isLeave) {
+                       if (record.leaveType === 'Paid') return darkMode ? "dark-paid-leave-row" : "light-paid-leave-row"; // We will inject styles or use style prop
+                       return darkMode ? "dark-unpaid-leave-row" : "light-unpaid-leave-row";
+                    }
+                    return "";
+                }}
+                onRow={(record) => {
+                    let bg = "";
+                    if (record.isMissing) {
+                        bg = darkMode ? "rgba(255, 77, 79, 0.1)" : "#fff1f0";
+                        return { style: { background: bg } };
+                    }
+                    if (record.isLeave) {
+                       if (record.leaveType === 'Paid') bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
+                       else bg = darkMode ? "#333" : "#fafafa";
+                       return { style: { background: bg } };
+                    }
+                    return {};
+                }}
+                style={{
+                background: darkMode ? DARK_CARD : "#fff",
+                }}
+            />
+            )}
+        </Card>
 
         {/* EDIT MODAL */}
         <Modal
           open={editOpen}
-          title={`Request Correction - ${currentRecord?.date}`}
+          title={`Edit Punch - ${currentRecord?.date}`}
           footer={null}
           onCancel={() => setEditOpen(false)}
           styles={{
@@ -518,15 +622,15 @@ export default function EmployeeDashboard() {
             },
           }}
         >
-          <Form layout="vertical" form={form} onFinish={handleRequestUpdate}>
-            <div style={{ marginBottom: 16, color: "#888", fontSize: 12 }}>
-              Edit the punch times below (comma separated, HH:MM). In Time and Out Time will be auto-calculated.
-            </div>
-            <Form.Item name="punchTimes" label="Punch Times" required>
+          <Form layout="vertical" form={form} onFinish={handleUpdate}>
+            <Form.Item name="inTime" label="In Time" required>
               <Input />
             </Form.Item>
-            <Form.Item name="reason" label="Reason for Correction" required>
-              <Input.TextArea rows={2} />
+            <Form.Item name="outTime" label="Out Time" required>
+              <Input />
+            </Form.Item>
+            <Form.Item name="punchTimes" label="Punch Times" required>
+              <Input />
             </Form.Item>
             <div style={{ textAlign: "right" }}>
               <Button onClick={() => setEditOpen(false)}>Cancel</Button>
@@ -535,7 +639,7 @@ export default function EmployeeDashboard() {
                 htmlType="submit"
                 style={{ marginLeft: 8 }}
               >
-                Send Request
+                Save
               </Button>
             </div>
           </Form>
