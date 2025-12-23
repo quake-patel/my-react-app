@@ -15,6 +15,7 @@ import {
   Modal,
   Form,
   Input,
+  InputNumber,
   Tabs,
   Switch,
   ConfigProvider,
@@ -33,14 +34,17 @@ import {
   BulbOutlined,
   SettingOutlined,
   DeleteOutlined,
-  PlusOutlined
+  PlusOutlined,
+  DollarOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined
 } from "@ant-design/icons";
 import Papa from "papaparse";
 import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
 import { db, auth } from "../firebase";
-import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, setDoc } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 
@@ -152,6 +156,15 @@ export default function AdminDashboard() {
   const [holidayModalOpen, setHolidayModalOpen] = useState(false);
   const [newHolidayDate, setNewHolidayDate] = useState(null);
   const [newHolidayName, setNewHolidayName] = useState("");
+  const [salaries, setSalaries] = useState({});
+  const [showSalary, setShowSalary] = useState(false);
+  const [salaryModalOpen, setSalaryModalOpen] = useState(false);
+  const [salaryForm] = Form.useForm();
+  const [incentives, setIncentives] = useState({});
+  const [incentiveModalOpen, setIncentiveModalOpen] = useState(false);
+  const [incentiveForm] = Form.useForm();
+  const [selectedEmpForIncentive, setSelectedEmpForIncentive] = useState(null);
+
   
   const navigate = useNavigate();
 
@@ -183,9 +196,44 @@ export default function AdminDashboard() {
     }
   };
 
+  const fetchSalaries = async () => {
+      try {
+          const snap = await getDocs(collection(db, "Salary"));
+          const data = {};
+          snap.docs.forEach(d => {
+              // Assuming doc ID is employeeId or it has a field
+              const val = d.data();
+              if (val.employeeId) data[val.employeeId] = val.amount;
+          });
+          setSalaries(data);
+      } catch (e) {
+          console.error("Failed to load salaries");
+      }
+  };
+
+  const fetchIncentives = async () => {
+      try {
+          const snap = await getDocs(collection(db, "Incentives"));
+          const data = {};
+          snap.docs.forEach(d => {
+              const val = d.data();
+              if (val.employeeId && val.month) {
+                  const key = `${val.employeeId}_${val.month}`; // e.g. "1107_2025-12"
+                  data[key] = val.amount;
+              }
+          });
+          setIncentives(data);
+      } catch (e) {
+          console.error("Failed to load incentives");
+      }
+  };
+
+
   useEffect(() => {
     fetchData();
     fetchHolidays();
+    fetchSalaries();
+    fetchIncentives();
   }, []);
 
   const handleFileUpload = (file) => {
@@ -251,6 +299,80 @@ export default function AdminDashboard() {
     setCurrentRecord(record);
     form.setFieldsValue({ punchTimes: (record.punchTimes || []).join(", ") });
     setEditOpen(true);
+  };
+  
+  /* ================= SALARY MANAGEMENT ================= */
+  const handleManageSalaries = () => {
+      setSalaryModalOpen(true);
+  };
+
+  const handleSaveSalary = async (values) => {
+      try {
+          // values: { [employeeId]: amount }
+          // We iterate and save each
+          const promises = Object.entries(values).map(async ([empId, amount]) => {
+             // For simplicity, we use setDoc with merge to update or create
+             // We need a doc ID. We can use employeeId as doc ID for easiest lookup, or keep random IDs.
+             // Previous fetch logic assumed random IDs but stored employeeId field.
+             // To make it robust, let's query for existing doc by employeeId, update if exists, else add.
+             // OR, cleaner: Use employeeId AS the doc ID in 'Salary' collection.
+             
+             // Let's migrate to using EmployeeId as key if possible, or search-update.
+             // For now search-update is safer for existing data.
+             
+             // Actually, the previous fetchSalaries read ANY doc with employeeId.
+             // Let's stick to using setDoc with employeeId as key for NEW/UPDATED entries if we can.
+             // But names are more user friendly.
+             
+             // Simple approach: Use setDoc on collection "Salary" with custom ID = employeeId
+             await setDoc(doc(db, "Salary", empId), {
+                 employeeId: empId,
+                 amount: amount,
+                 updatedAt: new Date().toISOString()
+             });
+          });
+          
+          await Promise.all(promises);
+          message.success("Salaries updated");
+          setSalaryModalOpen(false);
+          fetchSalaries();
+      } catch (e) {
+          console.error(e);
+          message.error("Failed to save salaries");
+      }
+  };
+  /* ================= INCENTIVE MANAGEMENT ================= */
+  const openAddIncentive = (employee) => {
+      setSelectedEmpForIncentive(employee);
+      // Pre-fill if exists for selected month
+      const monthStr = selectedMonth.format("YYYY-MM");
+      const key = `${employee.employeeId}_${monthStr}`;
+      const existing = incentives[key] || 0;
+      incentiveForm.setFieldsValue({ amount: existing });
+      setIncentiveModalOpen(true);
+  };
+
+  const handleSaveIncentive = async (values) => {
+      if (!selectedEmpForIncentive) return;
+      const monthStr = selectedMonth.format("YYYY-MM");
+      const empId = selectedEmpForIncentive.employeeId;
+      const key = `${empId}_${monthStr}`;
+      
+      try {
+          // Store in "Incentives" collection with a composite ID
+          await setDoc(doc(db, "Incentives", key), {
+              employeeId: empId,
+              month: monthStr,
+              amount: values.amount,
+              updatedAt: new Date().toISOString()
+          });
+          message.success("Incentive saved");
+          setIncentiveModalOpen(false);
+          fetchIncentives();
+      } catch(e) {
+          console.error(e);
+          message.error("Failed to save incentive");
+      }
   };
   /* ================= HOLIDAY LOGIC ================= */
   const handleAddHoliday = async () => {
@@ -391,15 +513,91 @@ export default function AdminDashboard() {
     // Calculate Leaves Count from records
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
 
+    // Salary Calculation
+    // Default 30,000 provided by request if not in DB
+    const employeeId = employeeRecords[0]?.employeeId;
+    const monthlySalary = (employeeId && salaries[employeeId]) ? Number(salaries[employeeId]) : 30000;
+    
+    // Logic: 
+    // 1. Target Hours = Working Days * 8
+    // 2. Hourly Rate = Salary / Target Hours
+    // 3. Payable = Eligible Hours * Hourly Rate (Cap at Monthly Salary if eligible > target?? User said "eligible for full salary if... 160 hours". 
+    //    User also said "If works less... not eligible for full". This implies cap is natural max.
+    //    But if they work MORE than target, do they get more? "eligible for the full salary" implies max is full salary. 
+    //    However, usually hourly employees get paid for overtime. 
+    //    Given "We support full-day salary and half-day salary calculations", let's stick to pro-rata but cap at MAX salary for "Full Salary" status.
+    //    actually, "eligible for full salary if... 160 hours" -> If they work 170, they get full salary.
+    //    If they work 150, they get 150/160 * 30000.
+    
+    // Refined Logic based on "Daily Buckets":
+    // Daily Rate = Monthly Salary / Working Days
+    // Go through each recorded day:
+    // >= 8 hours: Full Day (1.0)
+    // 3 - 7.99 hours: Half Day (0.5)
+    // < 3 hours: Absent (0.0) -> effectively handled by not adding anything
+    
+    // We iterate through monthlyRecords to calculate earned days
+    let earnedDays = 0;
+    
+    monthlyRecords.forEach(r => {
+        let dailyHours = 0;
+        if (r.hours) {
+           const [h, m] = r.hours.split(":").map(Number);
+           dailyHours = h + (m/60);
+        }
+        
+
+        // Weekend / Holiday Logic for Pay?
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
+        const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+
+        // Effective hours for pay purposes depends on weekend approval
+        let hoursForPay = dailyHours;
+        if (isWeekend && !r.weekendApproved) {
+            hoursForPay = 0;
+        }
+        
+        if (hoursForPay >= 8) {
+            earnedDays += 1;
+        } else if (hoursForPay >= 3) {
+            earnedDays += 0.5;
+        }
+    });
+
+    const dailyRate = workingDays > 0 ? monthlySalary / workingDays : 0;
+    
+    // Incentive Calculation
+    const monthStr = selectedMonth.format("YYYY-MM");
+    const incentiveKey = `${employeeId}_${monthStr}`;
+    const incentiveAmount = incentives[incentiveKey] !== undefined ? Number(incentives[incentiveKey]) : 0;
+
+    let payableSalary = (earnedDays * dailyRate) + incentiveAmount;
+    
+    // Cap at monthly salary?
+    // If they work extra weekends, they might exceed standard working days.
+    // "Eligible for full salary" usually implies 30k max, but if they work EXTRA days, they should get paid extra?
+    // User paused on "Full Salary" if 160 hours previously.
+    // Now user says "no... if day 8hr full day salary".
+    // I will NOT cap it arbitrarily if they earned extra days.
+    // But strict monthly salary usually implies a fixed amount.
+    // However, without explicit "No Overtime" rule, I will let it float based on earned days.
+    // Actually, "salary as 30,000" implies that's the base.
+    // Let's stick to: Payable = Earned Days * Daily Rate.
+    
+    if (workingDays === 0) payableSalary = 0; // Avoid division by zero issues
+    
     return {
       workingDays,
       targetHours,
       actualHours: actualHours,
-      difference: eligibleHours - targetHours, // Difference is based on ELIGIBLE hours now
+      difference: eligibleHours - targetHours,
       pendingWeekends,
-      eligibleHours, // Added for UI display
+      eligibleHours,
       missingDays,
-      totalLeaves: missingDays.length + leavesCount
+      totalLeaves: missingDays.length + leavesCount,
+      payableSalary,
+      monthlySalary,
+      incentiveAmount // Pass to render
     };
   };
 
@@ -442,6 +640,7 @@ export default function AdminDashboard() {
         outTime,
         numberOfPunches: punchTimes.length,
         hours: totalHours,
+        isEdited: true
       });
       message.success("Record updated");
       setEditOpen(false);
@@ -527,18 +726,43 @@ export default function AdminDashboard() {
           boxShadow: darkMode ? "0 2px 8px rgba(0,0,0,0.5)" : "0 2px 8px rgba(0,0,0,0.05)",
           border: darkMode ? "1px solid #303030" : "1px solid #f0f0f0"
       }}>
-          <Row gutter={[16, 16]}>
-              <Col xs={12} sm={6}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
-              <Col xs={12} sm={6}><Statistic title="Target Hours" value={payroll.targetHours} valueStyle={{ fontSize: 16, fontWeight: 500 }} prefix={<ClockCircleOutlined />} /></Col>
-              <Col xs={12} sm={6}>
+          <Row gutter={[16, 24]}>
+              <Col xs={12} sm={8}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
+              <Col xs={12} sm={8}><Statistic title="Target Hours" value={payroll.targetHours} valueStyle={{ fontSize: 16, fontWeight: 500 }} prefix={<ClockCircleOutlined />} /></Col>
+              <Col xs={12} sm={8}>
                   <Statistic 
-                    title="Difference (Eligible - Target)" 
+                    title="Total Hours" 
+                    value={payroll.eligibleHours.toFixed(2)} 
+                    valueStyle={{ fontSize: 16, fontWeight: 500, color: "#1890ff" }} 
+                    prefix={<ClockCircleOutlined />} 
+                  />
+              </Col>
+              <Col xs={12} sm={8}>
+                  <Statistic 
+                    title="Difference" 
                     value={payroll.difference.toFixed(2)} 
                     valueStyle={{ fontSize: 20, color: payroll.difference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: "bold" }} 
                     prefix={payroll.difference > 0 ? <PlusOutlined /> : <></>} 
                   />
               </Col>
-              <Col xs={12} sm={6}>
+              <Col xs={12} sm={8}>
+                  <Statistic 
+                    title="Estimated Salary" 
+                    value={showSalary ? payroll.payableSalary : "******"} 
+                    precision={showSalary ? 2 : 0}
+                    valueStyle={{ fontSize: 20, color: "#52c41a", fontWeight: "bold" }} 
+                    prefix={<DollarOutlined />}
+                    suffix={
+                        showSalary ? (
+                            <div style={{display:'flex', flexDirection:'column', alignItems:'flex-start', lineHeight: 1.2}}>
+                                <span style={{fontSize: 14, color: '#888', marginLeft: 4}}>/ {payroll.monthlySalary.toLocaleString()}</span>
+                                {payroll.incentiveAmount > 0 && <Tag color="gold" style={{marginLeft: 4, marginTop: 2}}>+ ₹{payroll.incentiveAmount.toLocaleString()} Inc.</Tag>}
+                            </div>
+                        ) : ""
+                    }
+                  />
+              </Col>
+              <Col xs={12} sm={8}>
                   <Statistic 
                     title="Leaves" 
                     value={payroll.totalLeaves || 0} 
@@ -631,7 +855,12 @@ export default function AdminDashboard() {
     }},
     { title: "All Punch Times", dataIndex: "punchTimes", key: "punchTimes", render: (t, r) => {
         if (r.isMissing) return "-";
-        return (t || []).join(", ");
+        return (
+            <div>
+                {(t || []).join(", ")}
+                {r.isEdited && <Tag color="purple" style={{ marginLeft: 8 }}>Edited</Tag>}
+            </div>
+        );
     }},
     { title: "Action", key: "action", render: (_, r) => {
         if (r.isMissing) return null; // Or add Mark Present here later
@@ -695,6 +924,13 @@ export default function AdminDashboard() {
                         style={{ width: 140 }}
                     />
                     <Button icon={<SettingOutlined />} onClick={() => setHolidayModalOpen(true)}>Holidays</Button>
+                    <Button 
+                        icon={showSalary ? <EyeInvisibleOutlined /> : <EyeOutlined />} 
+                        onClick={() => setShowSalary(!showSalary)}
+                    >
+                        {showSalary ? "Hide Revenue" : "Show Revenue"}
+                    </Button>
+                    <Button icon={<DollarOutlined />} onClick={handleManageSalaries}>Manage Salaries</Button>
                 </div>
             </Col>
             <Col xs={24} lg={8} style={{ textAlign: 'right' }}>
@@ -714,8 +950,22 @@ export default function AdminDashboard() {
                 {Object.entries(employeeGroups).map(([k, emp]) => {
                   const payroll = getMonthlyPayroll(emp.records);
                   return (
-                  <Col key={k} xs={24} sm={24} md={12} lg={12} xl={8}>
-                    <Card hoverable title={<><UserOutlined /> {emp.employeeName}</>} extra={<Tag color="blue">ID: {emp.employeeId}</Tag>} style={{ backgroundColor: darkMode ? "#1f1f1f" : "#fff" }}>
+                  <Col key={k} xs={24} sm={24} md={12} lg={12} xl={8} style={{ display: "flex" }}>
+                    <Card 
+                        hoverable 
+                        title={<><UserOutlined /> {emp.employeeName}</>} 
+                        extra={<Tag color="blue">ID: {emp.employeeId}</Tag>} 
+                        style={{ 
+                            backgroundColor: darkMode ? "#1f1f1f" : "#fff", 
+                            height: "100%", 
+                            display: "flex", 
+                            flexDirection: "column" 
+                        }}
+                        bodyStyle={{ flex: 1, display: "flex", flexDirection: "column" }}
+                        actions={[
+                            <Button type="link" icon={<DollarOutlined />} onClick={() => openAddIncentive(emp)}>Add Incentive</Button>
+                        ]}
+                    >
                       
                       {renderPayrollStats(payroll, darkMode, emp)}
 
@@ -783,7 +1033,10 @@ export default function AdminDashboard() {
                                   </Row>
                                   {rec.punchTimes?.length > 0 && <div>
                                     <div style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>All Punch Times:</div>
-                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{rec.punchTimes.map((t, i) => <Tag key={i} color="blue">{t}</Tag>)}</div>
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                        {rec.punchTimes.map((t, i) => <Tag key={i} color="blue">{t}</Tag>)}
+                                        {rec.isEdited && <Tag color="purple">Edited</Tag>}
+                                    </div>
                                   </div>}
                                   <div style={{marginTop: 8, display: 'flex', gap: 8}}>
                                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(rec)}>Edit</Button>
@@ -941,6 +1194,73 @@ export default function AdminDashboard() {
                  Note: Weekends (Sat/Sun) are automatically excluded from working days.
                  Default holidays included: {DEFAULT_HOLIDAYS.join(", ")}
              </div>
+        </Modal>
+
+        {/* SALARY MANAGEMENT MODAL */}
+        <Modal
+            open={salaryModalOpen}
+            title="Manage Employee Salaries"
+            footer={null}
+            onCancel={() => setSalaryModalOpen(false)}
+            width={600}
+        >
+            <Form form={salaryForm} onFinish={handleSaveSalary} layout="vertical">
+                <div style={{ maxHeight: 400, overflowY: "auto", marginBottom: 16 }}>
+                    {Object.entries(employeeGroups).map(([key, emp]) => {
+                        // Current salary
+                        const currentSal = salaries[emp.employeeId] || 30000;
+                        return (
+                            <Row key={key} gutter={16} align="middle" style={{ marginBottom: 12 }}>
+                                <Col span={12}>
+                                    <div><strong>{emp.employeeName}</strong></div>
+                                    <div style={{ fontSize: 12, color: "#888" }}>ID: {emp.employeeId}</div>
+                                </Col>
+                                <Col span={12}>
+                                    <Form.Item 
+                                        name={emp.employeeId} 
+                                        initialValue={currentSal}
+                                        style={{ margin: 0 }}
+                                    >
+                                        <InputNumber 
+                                            formatter={value => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                            parser={value => value.replace(/\₹\s?|(,*)/g, '')}
+                                            style={{ width: "100%" }}
+                                        />
+                                    </Form.Item>
+                                </Col>
+                            </Row>
+                        )
+                    })}
+                </div>
+                <div style={{ textAlign: "right" }}>
+                     <Button onClick={() => setSalaryModalOpen(false)} style={{ marginRight: 8 }}>Cancel</Button>
+                     <Button type="primary" htmlType="submit">Save Changes</Button>
+                </div>
+            </Form>
+
+        </Modal>
+
+        {/* INCENTIVE MODAL */}
+        <Modal
+            open={incentiveModalOpen}
+            title={`Add Incentive - ${selectedEmpForIncentive?.employeeName}`}
+            footer={null}
+            onCancel={() => setIncentiveModalOpen(false)}
+        >
+            <Form form={incentiveForm} onFinish={handleSaveIncentive} layout="vertical">
+                <Form.Item name="amount" label="Incentive Amount" rules={[{ required: true, message: 'Please enter amount' }]}>
+                    <InputNumber 
+                        style={{ width: "100%" }} 
+                        placeholder="e.g. 5000"
+                        formatter={value => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                        parser={value => value.replace(/₹\s?|(,*)/g, '')}
+                    />
+                </Form.Item>
+                <div style={{ textAlign: "right" }}>
+                     <Button onClick={() => setIncentiveModalOpen(false)} style={{ marginRight: 8 }}>Cancel</Button>
+                     <Button type="primary" htmlType="submit">Save Incentive</Button>
+                </div>
+            </Form>
         </Modal>
         </Content>
       </Layout>

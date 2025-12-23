@@ -33,5 +33,13 @@ service cloud.firestore {
     match /holidays/{docId} {
       allow read, write: if request.auth != null && isStaff();
     }
+
+    match /Salary/{docId} {
+      allow read, write: if request.auth != null && isStaff();
+    }
+
+    match /Incentives/{docId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

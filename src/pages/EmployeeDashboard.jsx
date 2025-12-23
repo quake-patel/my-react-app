@@ -234,9 +234,17 @@ export default function EmployeeDashboard() {
           border: darkMode ? "1px solid #303030" : "1px solid #f0f0f0"
       }}>
           <Row gutter={[16, 16]}>
-              <Col xs={12} sm={6}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
-              <Col xs={12} sm={6}><Statistic title="Target Hours" value={payroll.targetHours} valueStyle={{ fontSize: 16, fontWeight: 500 }} prefix={<ClockCircleOutlined />} /></Col>
-              <Col xs={12} sm={6}>
+              <Col xs={12} sm={4}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
+              <Col xs={12} sm={5}><Statistic title="Target Hours" value={payroll.targetHours} valueStyle={{ fontSize: 16, fontWeight: 500 }} prefix={<ClockCircleOutlined />} /></Col>
+               <Col xs={12} sm={5}>
+                  <Statistic 
+                    title="Total Hours" 
+                    value={payroll.eligibleHours.toFixed(2)} 
+                    valueStyle={{ fontSize: 16, fontWeight: 500, color: "#1890ff" }} 
+                    prefix={<ClockCircleOutlined />} 
+                  />
+              </Col>
+              <Col xs={12} sm={5}>
                   <Statistic 
                     title="Difference (Eligible - Target)" 
                     value={payroll.difference.toFixed(2)} 
@@ -244,7 +252,7 @@ export default function EmployeeDashboard() {
                     prefix={payroll.difference > 0 ? <PlusOutlined /> : <></>} 
                   />
               </Col>
-              <Col xs={12} sm={6}>
+              <Col xs={12} sm={5}>
                   <Statistic 
                     title="Leaves" 
                     value={payroll.totalLeaves || 0} 
@@ -399,7 +407,12 @@ export default function EmployeeDashboard() {
       render: (t, r) => {
           if (r.isMissing) return "-";
           if (r.isLeave) return "-";
-          return (t || []).join(", ");
+          return (
+              <div>
+                  {(t || []).join(", ")}
+                  {r.isEdited && <Tag color="purple" style={{ marginLeft: 8 }}>Edited</Tag>}
+              </div>
+          );
       },
     },
     {
