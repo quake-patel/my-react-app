@@ -21,7 +21,8 @@ import {
   ConfigProvider,
   theme,
   DatePicker,
-  List
+  List,
+  Grid
 } from "antd";
 import {
   UploadOutlined,
@@ -172,6 +173,7 @@ export default function AdminDashboard() {
   
   // On Duty / Office Work Modal State - REMOVED
 
+  const screens = Grid.useBreakpoint();
   
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -190,6 +192,7 @@ export default function AdminDashboard() {
           return dateB.valueOf() - dateA.valueOf();
       });
       setRecords(data);
+      syncEmployeesFromPunches(data);
     } catch (e) {
       console.error(e);
       message.error("Failed to load records");
@@ -204,6 +207,65 @@ export default function AdminDashboard() {
     } catch (e) {
       console.error("Failed to load holidays");
     }
+  };
+
+  const syncEmployeesFromPunches = async (punchesData) => {
+      // Extract unique employees from punches
+      const uniqueEmps = {};
+      punchesData.forEach(p => {
+          if (p.email && !uniqueEmps[p.email]) {
+              uniqueEmps[p.email] = {
+                  email: p.email.toLowerCase(),
+                  employeeId: p.employeeId,
+                  firstName: p.firstName,
+                  department: p.department,
+                  employee: p.employee
+              };
+          }
+      });
+
+      // Get existing employees
+      const empSnap = await getDocs(collection(db, "employees"));
+      const existingEmails = new Set(empSnap.docs.map(d => (d.data().email || '').toLowerCase()));
+
+      // Add missing
+      const batchPromises = [];
+      Object.keys(uniqueEmps).forEach(email => {
+          const emp = uniqueEmps[email];
+          // Use email as doc ID to prevent duplicates (sanitize special chars if needed, but email is usually safe for keys or better verify)
+          // Actually, let's just check if it exists in our set first to save writes, but if we want to be safe against race conditions, ID is best.
+          // Since we already fetched all employees, we can skip existing.
+          
+          if (!existingEmails.has(email)) {
+              // Create a consistent ID from email to prevent future duplicates if this script runs again
+              // We can't easily change existing IDs (auto-generated) without migration, 
+              // but we can start enforcing it for new ones.
+              // OR just rely on the existingEmails set check which we already have.
+              // The issue "duplicate contacts" suggests the previous check failed or there were already duplicates.
+              // Let's rely on set check AND maybe use email as ID for new ones?
+              // Let's just blindly add if not exists, but we trust 'existingEmails' set.
+              
+              // Wait, the previous logic was `if (!existingEmails.has(emp.email))`. 
+              // If that ran multiple times on fresh reload, maybe `empSnap` didn't have the new ones yet?
+              // No, fetch awaits.
+              
+              // Only reason for duplicates is if they existed BEFORE we added this unique check,
+              // OR if 'email' casing differed. I handled toLowerCase() so that should be fine.
+              
+              // Let's switch to using setDoc with email-based ID for NEW entries. 
+              // This guarantees we never create a 2nd doc for the same email even if we try.
+              const safeId = email.replace(/[^a-zA-Z0-9]/g, "_");
+              batchPromises.push(setDoc(doc(db, "employees", safeId), {
+                  ...emp,
+                  createdAt: new Date().toISOString()
+              }));
+          }
+      });
+      
+      if (batchPromises.length > 0) {
+          await Promise.all(batchPromises);
+          console.log(`Synced ${batchPromises.length} new employees`);
+      }
   };
 
   const fetchSalaries = async () => {
@@ -261,12 +323,25 @@ export default function AdminDashboard() {
           const employeeId = getField(row, ["Employee", "Employee ID"]);
           const firstName = getField(row, ["First Name", "FirstName"]);
           const department = getField(row, ["Department", "Dept"]);
-          const date = getField(row, ["Date"]);
+          
+          let date = getField(row, ["Date"]);
+          // Normalize Date for ID consistency
+          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+          if (d.isValid()) {
+              date = d.format("YYYY-MM-DD");
+          }
+
+          if (!employeeId || !date) continue; // Skip incomplete rows
+
           const numberOfPunchesStr = getField(row, ["No. of Punches"]);
           const numberOfPunches = numberOfPunchesStr ? parseInt(numberOfPunchesStr, 10) : 0;
           const timeValue = getField(row, ["Time", "Times"]);
           const punchTimes = parseTimes(timeValue, numberOfPunches);
           const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
+          
+          // Unique ID for idempotency
+          const uniqueId = `${employeeId}_${date}`;
+
           const docData = {
             employeeId: employeeId || "",
             firstName: firstName || "",
@@ -282,7 +357,8 @@ export default function AdminDashboard() {
             uploadedAt: new Date().toISOString(),
           };
           try {
-            await addDoc(punchesRef, docData);
+            // Use setDoc to overwrite/merge instead of addDoc to prevent duplicates
+            await setDoc(doc(db, "punches", uniqueId), docData);
             successCount++;
           } catch (e) {
             console.error(e);
@@ -1145,7 +1221,7 @@ export default function AdminDashboard() {
   const columns = [
     { title: "Employee", dataIndex: "employee", key: "employee", width: 180, fixed: "left", render: (_, r) => <div style={{fontWeight:600}}>{r.firstName || r.employee || "N/A"}</div> },
     { title: "Date", dataIndex: "fullDate", key: "fullDate", width: 220, fixed: "left", render: (t, r) => <span>{t} {r.isGranted && <Tag color="gold" style={{marginLeft:4}}>Granted</Tag>}</span> },
-    { title: "In 1", dataIndex: "in1", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}{r.isEdited && <Tag color="purple" style={{fontSize:9, marginLeft:2}}>E</Tag>}</span> },
+    { title: "In 1", dataIndex: "in1", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
     { title: "Out 1", dataIndex: "out1", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
     { title: "In 2", dataIndex: "in2", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
     { title: "Out 2", dataIndex: "out2", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
@@ -1205,7 +1281,7 @@ export default function AdminDashboard() {
               </Col>
            </Row>
         </Header>
-        <Content style={{ padding: 24, background: darkMode ? "#141414" : "#f0f2f5" }}>
+        <Content style={{ padding: screens.xs ? 8 : 24, background: darkMode ? "#141414" : "#f0f2f5" }}>
           
           <Row gutter={[16, 16]} justify="space-between" align="middle" style={{ marginBottom: 16 }}>
             <Col xs={24} lg={16}>

@@ -41,7 +41,7 @@ export default function Login() {
         padding: 0,
       }}
     >
-      <Card title="Punch Tracker Login" style={{ width: 360 }}>
+      <Card title="Punch Tracker Login" style={{ width: "100%", maxWidth: 400, margin: "0 16px" }}>
         <Form layout="vertical" onFinish={onFinish}>
           <Form.Item
             label="Email"

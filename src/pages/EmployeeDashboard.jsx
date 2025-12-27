@@ -14,7 +14,8 @@ import {
   Row,
   Col,
   Statistic,
-  Tag
+  Tag,
+  Grid
 } from "antd";
 import {
   ReloadOutlined,
@@ -91,6 +92,9 @@ export default function EmployeeDashboard() {
   const [employeeId, setEmployeeId] = useState(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const screens = Grid.useBreakpoint();
+  
+  const [currentUserName, setCurrentUserName] = useState("");
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -439,11 +443,17 @@ export default function EmployeeDashboard() {
       
       setRecords(data);
 
-      // Fetch Employee ID
+      // Fetch Employee ID & Name
       const empQ = query(collection(db, "employees"), where("email", "==", userEmail));
       const empSnap = await getDocs(empQ);
       if (!empSnap.empty) {
-          setEmployeeId(empSnap.docs[0].data().employeeId);
+          const empData = empSnap.docs[0].data();
+          setEmployeeId(empData.employeeId);
+          setCurrentUserName(empData.firstName ? `${empData.firstName} ${empData.lastName || ''}` : empData.employee);
+      } else if (data.length > 0) {
+           // Fallback to punch record name
+           setEmployeeId(data[0].employeeId);
+           setCurrentUserName(data[0].firstName || data[0].employee);
       }
     } catch {
       message.error("Failed to fetch data");
@@ -714,13 +724,15 @@ export default function EmployeeDashboard() {
         style={{
           minHeight: "100vh",
           background: darkMode ? DARK_BG : "#f0f2f5",
-          padding: 24,
+          padding: screens.xs ? 8 : 24,
         }}
       >
         {/* HEADER */}
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 16 }}>
            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-               <h2 style={{ color: darkMode ? "#fff" : "#000", margin: 0 }}>My Punch Records</h2>
+               <h2 style={{ color: darkMode ? "#fff" : "#000", margin: 0 }}>
+                   My Punch Records {currentUserName && <span style={{fontSize:'0.8em', opacity:0.7}}>({currentUserName})</span>}
+               </h2>
                <DatePicker.MonthPicker 
                   value={selectedMonth} 
                   onChange={setSelectedMonth} 
@@ -837,6 +849,7 @@ export default function EmployeeDashboard() {
         open={chatOpen} 
         onClose={() => setChatOpen(false)} 
         currentUserEmail={userEmail}
+        currentUserName={currentUserName}
         selectedMonth={selectedMonth}
       />
     </ConfigProvider>

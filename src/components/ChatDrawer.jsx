@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Drawer, List, Avatar, Input, Button, Badge, Typography, message, Tabs } from 'antd';
+import { Drawer, List, Avatar, Input, Button, Badge, Typography, message, Tabs, Grid } from 'antd';
 import { SendOutlined, UserOutlined, SearchOutlined, MessageOutlined, TeamOutlined } from '@ant-design/icons';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, setDoc, orderBy, getDocs } from 'firebase/firestore';
 import dayjs from 'dayjs';
 
 const { Text } = Typography;
+const { useBreakpoint } = Grid;
 
 const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selectedMonth }) => {
+  const screens = useBreakpoint();
+  const drawerWidth = screens.xs ? "100%" : 400;
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'contacts'
   
   const [users, setUsers] = useState([]);
@@ -38,16 +41,27 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
             avatar: d.data().profilePic || null
         })).filter(u => u.email && u.email !== myEmail);
         
+        // Deduplicate by email
+        const uniqueUsers = [];
+        const seenEmails = new Set();
+        
+        empList.forEach(u => {
+            if (!seenEmails.has(u.email)) {
+                seenEmails.add(u.email);
+                uniqueUsers.push(u);
+            }
+        });
+        
         // Add Admin manually if not in list
         const adminEmail = "chirag@theawakens.com"; 
-        if (myEmail !== adminEmail && !empList.find(u => u.email === adminEmail)) {
-            empList.unshift({ email: adminEmail, name: "Admin (Chirag)", avatar: null });
+        if (myEmail !== adminEmail && !seenEmails.has(adminEmail)) {
+            uniqueUsers.unshift({ email: adminEmail, name: "Admin (Chirag)", avatar: null });
         }
         
-        empList.sort((a,b) => a.name.localeCompare(b.name));
+        uniqueUsers.sort((a,b) => a.name.localeCompare(b.name));
         
-        setUsers(empList);
-        setFilteredUsers(empList);
+        setUsers(uniqueUsers);
+        setFilteredUsers(uniqueUsers);
       } catch (e) {
         console.error("Failed to fetch users", e);
       }
@@ -294,7 +308,7 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
       placement="right"
       onClose={() => { setSelectedUser(null); onClose(); }}
       open={open}
-      width={400}
+      width={drawerWidth}
       extra={selectedUser && <Button type="link" onClick={() => setSelectedUser(null)}>Back</Button>}
       bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
     >

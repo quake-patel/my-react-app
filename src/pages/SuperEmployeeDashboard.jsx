@@ -16,7 +16,8 @@ import {
   DatePicker,
   Row,
   Col,
-  Statistic
+  Statistic,
+  Grid
 } from "antd";
 import {
   ReloadOutlined,
@@ -81,6 +82,8 @@ export default function SuperEmployeeDashboard() {
   const [employeeId, setEmployeeId] = useState(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const [currentUserName, setCurrentUserName] = useState("");
+  const screens = Grid.useBreakpoint();
 
   /* ================= AUTH ================= */
   useEffect(() => {
@@ -110,7 +113,9 @@ export default function SuperEmployeeDashboard() {
             const q = query(collection(db, "employees"), where("email", "==", userEmail));
             const snap = await getDocs(q);
             if (!snap.empty) {
-                setEmployeeId(snap.docs[0].data().employeeId);
+                const empData = snap.docs[0].data();
+                setEmployeeId(empData.employeeId);
+                setCurrentUserName(empData.firstName ? `${empData.firstName} ${empData.lastName || ''}` : empData.employee);
             }
         };
         fetchEmpId();
@@ -743,7 +748,7 @@ export default function SuperEmployeeDashboard() {
         style={{
           minHeight: "100vh",
           background: darkMode ? DARK_BG : "#f0f2f5",
-          padding: 24,
+          padding: screens.xs ? 8 : 24,
         }}
       >
         <div
@@ -751,10 +756,14 @@ export default function SuperEmployeeDashboard() {
             display: "flex",
             justifyContent: "space-between",
             marginBottom: 16,
+            flexWrap: "wrap",
+            gap: 16
           }}
         >
            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-               <h2 style={{ color: darkMode ? "#fff" : "#000", margin: 0 }}>Super Employee Dashboard</h2>
+               <h2 style={{ color: darkMode ? "#fff" : "#000", margin: 0 }}>
+                   Super Employee Dashboard {currentUserName && <span style={{fontSize:'0.8em', opacity:0.7}}>({currentUserName})</span>}
+               </h2>
                <DatePicker.MonthPicker 
                   value={selectedMonth} 
                   onChange={setSelectedMonth} 
@@ -904,8 +913,9 @@ export default function SuperEmployeeDashboard() {
         open={chatOpen} 
         onClose={() => setChatOpen(false)} 
         currentUserEmail={userEmail}
-        selectedMonth={selectedMonth}
-      />
+          currentUserName={currentUserName}
+          selectedMonth={selectedMonth}
+        />
     </ConfigProvider>
   );
 }
