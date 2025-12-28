@@ -310,6 +310,11 @@ export default function SuperEmployeeDashboard() {
     // eligibleHours += (currentMonthAdj.grantedHours || 0); 
     // passedEligibleHours += (currentMonthAdj.grantedHours || 0);
 
+    // Calculate Net Earning Days
+    // Formula: Total Days in Month - Total Leaves
+    const daysInMonth = selectedMonth.daysInMonth();
+    const netEarningDays = daysInMonth - totalLeaves;
+
     return {
       workingDays,
       targetHours,
@@ -317,16 +322,19 @@ export default function SuperEmployeeDashboard() {
       difference: eligibleHours - targetHours,
       eligibleHours,
       missingDays,
-      shortDays, // Export
-      totalLeaves: totalLeaves, // Use the newly defined totalLeaves variable
+      shortDays, 
+      totalLeaves,
       passedWorkingDays,
       passedTargetHours,
       passedEligibleHours,
-      passedDifference: passedEligibleHours - passedTargetHours
+      passedDifference: passedEligibleHours - passedTargetHours,
+      passedDifference: passedEligibleHours - passedTargetHours,
+      // Net Earning Days Logic
+      netEarningDays: (dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()) - totalLeaves,
+      daysInMonth: dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()
     };
   };
 
-  /* ================= FETCH ================= */
   const fetchMyData = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -380,6 +388,7 @@ export default function SuperEmployeeDashboard() {
       fetchHolidays();
     }
   }, [userEmail, fetchMyData, fetchRequests]);
+
   const renderPayrollStats = (payroll) => (
       <div style={{ 
           marginBottom: 16, 
@@ -391,6 +400,15 @@ export default function SuperEmployeeDashboard() {
       }}>
           <Row gutter={[16, 16]}>
               <Col xs={12} sm={3}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
+              
+              {/* NEW: Net Earning Days */}
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Net Earning Days" 
+                    value={`${payroll.netEarningDays} / ${payroll.daysInMonth}`} 
+                    valueStyle={{ fontSize: 16, fontWeight: "bold", color: "#52c41a" }} 
+                  />
+              </Col>
               <Col xs={12} sm={4}><Statistic title="Passed Days" value={payroll.passedWorkingDays} suffix={`/ ${payroll.workingDays}`} valueStyle={{ fontSize: 16, fontWeight: 500, color: "#722ed1" }} /></Col>
               
               <Col xs={12} sm={4}>

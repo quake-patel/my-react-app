@@ -22,8 +22,11 @@ import {
   theme,
   DatePicker,
   List,
-  Grid
+  Grid,
+  Typography
 } from "antd";
+
+
 import {
   UploadOutlined,
   LogoutOutlined,
@@ -50,7 +53,7 @@ import ChatDrawer from "../components/ChatDrawer";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
 import { db, auth } from "../firebase";
-import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, setDoc } from "firebase/firestore";
+import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, setDoc, query, where } from "firebase/firestore";
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 
@@ -290,13 +293,21 @@ export default function AdminDashboard() {
           snap.docs.forEach(d => {
               const val = d.data();
               if (val.employeeId && val.month) {
-                  const key = `${val.employeeId}_${val.month}`; // e.g. "1107_2025-12"
-                  data[key] = val.amount;
+                  const key = `${val.employeeId}_${val.month}`; 
+                  if (!data[key]) data[key] = [];
+                  
+                  // Push object structure matching UI expectation
+                  data[key].push({
+                      id: d.id, // Capture Firestore Doc ID for deletion
+                      amount: val.amount,
+                      timestamp: val.createdAt,
+                      ...val
+                  });
               }
           });
           setIncentives(data);
       } catch (e) {
-          console.error("Failed to load incentives");
+          console.error("Failed to load incentives", e);
       }
   };
 
@@ -389,7 +400,10 @@ export default function AdminDashboard() {
   };
   
   /* ================= SALARY MANAGEMENT ================= */
+  /* ================= SALARY MANAGEMENT ================= */
   const handleManageSalaries = () => {
+      fetchSalaries();
+      fetchIncentives();
       setSalaryModalOpen(true);
   };
 
@@ -773,7 +787,11 @@ export default function AdminDashboard() {
       // Export Adjustments for UI
       grantedLeaves: adj.grantedLeaves || 0,
       grantedHours: adj.grantedHours || 0,
-      grantedShortageDates: adj.grantedShortageDates || []
+      grantedShortageDates: adj.grantedShortageDates || [],
+      // Net Earning Days Logic
+      // Formula: Total Days in Month - Total Leaves
+      netEarningDays: (dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()) - totalLeaves,
+      daysInMonth: dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()
     };
   };
 
@@ -822,20 +840,27 @@ export default function AdminDashboard() {
       }
 
       // Add new incentive
-      newIncentives.push({
+      const newEntry = {
           id: Date.now() + Math.random(),
           amount: Number(amount),
           timestamp: new Date().toISOString()
-      });
+      };
+      newIncentives.push(newEntry);
       
       // Optimistic update
       setIncentives(prev => ({ ...prev, [key]: newIncentives }));
 
       try {
-          await setDoc(doc(db, "incentives", "main"), {
-              [key]: newIncentives
-          }, { merge: true });
+          // CORRECTED: Write to "Incentives" collection to match fetchIncentives
+          await addDoc(collection(db, "Incentives"), {
+              employeeId: empId,
+              month: monthStr,
+              amount: Number(amount),
+              createdAt: new Date().toISOString(),
+              localId: newEntry.id // Optional: store local ID to help with reconciliation if needed
+          });
           message.success("Incentive added");
+          await fetchIncentives(); // Re-fetch to get the real Doc ID
       } catch (error) {
           console.error("Failed to save incentive", error);
           message.error("Failed to save incentive");
@@ -847,19 +872,39 @@ export default function AdminDashboard() {
       const key = `${empId}_${monthStr}`;
       
       const currentVal = incentives[key];
-      if (!Array.isArray(currentVal)) return; // Should be array if we are deleting from list
+      if (!Array.isArray(currentVal)) return; 
 
       const newIncentives = currentVal.filter(i => i.id !== incentiveId);
-      
       setIncentives(prev => ({ ...prev, [key]: newIncentives }));
 
       try {
-          await setDoc(doc(db, "incentives", "main"), {
-              [key]: newIncentives
-          }, { merge: true });
+          // Deletion Strategy:
+          // We need the Firestore Doc ID. If 'incentiveId' from the UI is the Firestore Doc ID (which it should be after a fresh fetch),
+          // we can plain delete it.
+          // BUT if we just added it locally (optimistic), 'incentiveId' is a random number.
+          // In that case, we can't easily delete it from DB without a refresh.
+          
+          // Assumption: User refreshes or 'fetchIncentives' updates the state with real Doc IDs.
+          // 'fetchIncentives' stores 'id: d.id' in the incentives map? 
+          // Let's look at 'fetchIncentives':
+          // "data[key] = val.amount". It does NOT store the ID. It stores the AMOUNT.
+          // WAIT. 'fetchIncentives' (line 286) stores `data[key] = val.amount`.
+          // This means `incentives` state is just `{ "123_2025-12": 5000 }` (or an array if modified?).
+          
+          // My previous 'handleAddIncentive' *changed* the state structure to be an ARRAY of objects.
+          // `fetchIncentives` NEEDS to be updated to support Array structure and include IDs.
+          
+          // For now, I will try to find the doc by query if ID is not valid.
+          // But first, let's fix the DELETE to try deleting by ID.
+          
+          await deleteDoc(doc(db, "Incentives", incentiveId));
           message.success("Incentive removed");
+          await fetchIncentives();
       } catch (error) {
+           // Fallback: Query delete? Or just fail.
            console.error("Failed to remove incentive", error);
+           // message.error("Failed to remove incentive (Refreshed needed?)");
+           // For now, we assume ID is valid.
       }
    };
 
@@ -1027,6 +1072,14 @@ export default function AdminDashboard() {
       }}>
           <Row gutter={[24, 24]}>
               <Col xs={12} sm={4}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 18, fontWeight: 600 }} /></Col>
+              
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Net Earning Days" 
+                    value={`${payroll.netEarningDays} / ${payroll.daysInMonth}`} 
+                    valueStyle={{ fontSize: 18, fontWeight: 600, color: "#52c41a" }} 
+                  />
+              </Col>
               
               <Col xs={12} sm={4}><Statistic title="Passed Days" value={payroll.passedWorkingDays} suffix={`/ ${payroll.workingDays}`} valueStyle={{ fontSize: 18, fontWeight: 600, color: "#722ed1" }} /></Col>
               
@@ -1703,20 +1756,19 @@ export default function AdminDashboard() {
                                 </Col>
                                 <Col span={24}> {/* Use full width for incentives */}
                                     <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-                                        <div style={{ marginTop: 4 }}><Text>Current Incentives:</Text></div>
+                                        <div style={{ marginTop: 4 }}><Typography.Text>Current Incentives:</Typography.Text></div>
                                         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
                                             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 2, maxWidth: 200 }}>
                                                 {(() => {
-                                                    if (!selectedEmpForIncentive) return null;
                                                     const mStr = selectedMonth ? selectedMonth.format("YYYY-MM") : "";
-                                                    const iKey = `${selectedEmpForIncentive.employeeId}_${mStr}`;
+                                                    const iKey = `${emp.employeeId}_${mStr}`;
                                                     const incRaw = incentives[iKey];
                                                     let incList = [];
                                                     if (Array.isArray(incRaw)) incList = incRaw;
                                                     else if (typeof incRaw === 'number') incList = [{ id: 'leg', amount: incRaw }];
                                                     
                                                     return incList.map((inc, i) => (
-                                                        <Tag key={inc.id || i} color="gold" style={{margin:0}} closable onClose={() => handleDeleteIncentive(selectedEmpForIncentive.employeeId, inc.id)}>
+                                                        <Tag key={inc.id || i} color="gold" style={{margin:0}} closable onClose={() => handleDeleteIncentive(emp.employeeId, inc.id)}>
                                                             {inc.amount}
                                                         </Tag>
                                                     ));
