@@ -63,8 +63,11 @@ const DEFAULT_HOLIDAYS = [
 
 const calculateTimes = (times) => {
   if (!times || times.length === 0) return { inTime: "", outTime: "", totalHours: "" };
-  // Sort times to ensure correct In/Out
-  const sortedTimes = [...times].sort();
+  // Filter and Sort times to ensure correct In/Out
+  const sortedTimes = times.filter(t => t && typeof t === 'string' && t.trim() !== "").sort();
+  
+  if (sortedTimes.length === 0) return { inTime: "", outTime: "", totalHours: "" };
+
   const inTime = sortedTimes[0];
   const outTime = sortedTimes[sortedTimes.length - 1];
   
@@ -182,7 +185,14 @@ export default function EmployeeDashboard() {
 
     monthlyRecords.forEach(r => {
       let dailyHours = 0;
-      if (r.hours) {
+      // Calculate from Punch Times if available
+      if (r.punchTimes && r.punchTimes.length > 0) {
+          const { totalHours } = calculateTimes(r.punchTimes);
+           if(totalHours) {
+              const [h, m] = totalHours.split(":").map(Number);
+              dailyHours = h + (m/60);
+           }
+      } else if (r.hours) {
         const [h, m] = r.hours.split(":").map(Number);
         dailyHours = h + (m/60);
       }
@@ -599,16 +609,17 @@ export default function EmployeeDashboard() {
         const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
         
         // Punch parsing
-        const punches = (r.punchTimes || []).sort();
-        const in1 = punches[0] || "";
-        const out1 = punches[1] || "";
-        const in2 = punches[2] || "";
-        const out2 = punches[3] || "";
-        const in3 = punches[4] || "";
+      const sortedPunches = (r.punchTimes || []).sort();
         
         // Hours Calc
         let dailyHours = 0;
-        if (r.hours) {
+        if (r.punchTimes && r.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(r.punchTimes);
+            if (totalHours) {
+                 const [h, m] = totalHours.split(":").map(Number);
+                 dailyHours = h + (m/60);
+            }
+        } else if (r.hours) {
            const [h, m] = r.hours.split(":").map(Number);
            dailyHours = h + (m/60);
         }
@@ -639,7 +650,7 @@ export default function EmployeeDashboard() {
         return {
            ...r,
            fullDate: getDayOfWeek(r.date),
-           in1, out1, in2, out2, in3,
+           sortedPunches,
            targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
            presentHoursFormatted: formatDuration(dailyHours),
            hoursShortByFormatted: formatDuration(hoursShortBy),
@@ -696,46 +707,58 @@ export default function EmployeeDashboard() {
   }, [records, payroll, selectedMonth, userEmail]);
 
   /* ================= TABLE ================= */
-  const columns = [
-    { title: "Date", dataIndex: "fullDate", width: 220, fixed: 'left' },
-    { title: "Date", dataIndex: "fullDate", width: 220, fixed: 'left' },
-    { title: "In 1", dataIndex: "in1", width: 100, align: "center", 
-      onCell: (record) => ({ onDoubleClick: () => toggleHighlight(record, record.in1) }),
-      render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4 } : {}}>{t}</span> 
-    },
-    { title: "Out 1", dataIndex: "out1", width: 100, align: "center",
-      onCell: (record) => ({ onDoubleClick: () => toggleHighlight(record, record.out1) }),
-      render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4 } : {}}>{t}</span>
-    },
-    { title: "In 2", dataIndex: "in2", width: 100, align: "center",
-      onCell: (record) => ({ onDoubleClick: () => toggleHighlight(record, record.in2) }),
-      render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4 } : {}}>{t}</span>
-    },
-    { title: "Out 2", dataIndex: "out2", width: 100, align: "center",
-      onCell: (record) => ({ onDoubleClick: () => toggleHighlight(record, record.out2) }),
-      render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4 } : {}}>{t}</span>
-    },
-    { title: "In 3", dataIndex: "in3", width: 100, align: "center" },
-    { title: "Total Hours", dataIndex: "targetHoursFormatted", width: 100, align: "center" },
-    { title: "Present Hours", dataIndex: "presentHoursFormatted", width: 120, align: "center" },
-    { title: "Hours Short by", dataIndex: "hoursShortByFormatted", width: 120, align: "center" },
-    { title: "Present Days", dataIndex: "presentDays", width: 100, align: "center", render: (v) => <span style={{ color: v ? "green" : "red" }}>{v}</span> },
-    { title: "Leave check", dataIndex: "leaveCheck", width: 100, align: "center" },
-    { title: "Day Swap off", dataIndex: "daySwapOff", width: 100, align: "center" },
-    { title: "Weekend Checks", dataIndex: "weekendCheck", width: 120, align: "center", render: (v) => v ? 1 : 0 }, // Screenshot uses 1/0
-    { title: "Paid Holidays", dataIndex: "paidHolidays", width: 100, align: "center" },
-    {
-      title: "Action",
-      width: 100,
-      fixed: 'right',
-      render: (_, r) => {
-        if (r.isMissing || r.isLeave || r.isWeekend) return null;
-        return (
-            <Button type="link" icon={<EditOutlined />} onClick={() => openRequest(r)} />
-        );
+  const maxPunches = React.useMemo(() => {
+    if (!dataSource || dataSource.length === 0) return 0;
+    return Math.max(0, ...dataSource.map(r => (r.sortedPunches || []).length));
+  }, [dataSource]);
+
+  const maxPairs = Math.max(3, Math.ceil(maxPunches / 2));
+
+  const columns = React.useMemo(() => {
+     const punchCols = [];
+     for (let i = 0; i < maxPairs; i++) {
+        punchCols.push({
+            title: `In ${i+1}`,
+            dataIndex: ["sortedPunches", i*2],
+            width: 100,
+            align: "center",
+            onCell: (record) => ({ onDoubleClick: () => record.sortedPunches && toggleHighlight(record, record.sortedPunches[i*2]) }),
+            render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4 } : {}}>{t}</span> 
+        });
+        punchCols.push({
+            title: `Out ${i+1}`,
+            dataIndex: ["sortedPunches", i*2+1],
+            width: 100,
+            align: "center",
+            onCell: (record) => ({ onDoubleClick: () => record.sortedPunches && toggleHighlight(record, record.sortedPunches[i*2+1]) }),
+            render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4 } : {}}>{t}</span>
+        });
+     }
+
+     return [
+      { title: "Date", dataIndex: "fullDate", width: 220, fixed: 'left' },
+      ...punchCols,
+      { title: "Total Hours", dataIndex: "targetHoursFormatted", width: 100, align: "center" },
+      { title: "Present Hours", dataIndex: "presentHoursFormatted", width: 120, align: "center" },
+      { title: "Hours Short by", dataIndex: "hoursShortByFormatted", width: 120, align: "center" },
+      { title: "Present Days", dataIndex: "presentDays", width: 100, align: "center", render: (v) => <span style={{ color: v ? "green" : "red" }}>{v}</span> },
+      { title: "Leave check", dataIndex: "leaveCheck", width: 100, align: "center" },
+      { title: "Day Swap off", dataIndex: "daySwapOff", width: 100, align: "center" },
+      { title: "Weekend Checks", dataIndex: "weekendCheck", width: 120, align: "center", render: (v) => v ? 1 : 0 }, 
+      { title: "Paid Holidays", dataIndex: "paidHolidays", width: 100, align: "center" },
+      {
+        title: "Action",
+        width: 100,
+        fixed: 'right',
+        render: (_, r) => {
+          if (r.isMissing || r.isLeave || r.isWeekend) return null;
+          return (
+              <Button type="link" icon={<EditOutlined />} onClick={() => openRequest(r)} />
+          );
+        },
       },
-    },
-  ];
+    ];
+  }, [maxPairs]);
 
   return (
     <ConfigProvider

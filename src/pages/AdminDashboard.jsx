@@ -99,8 +99,14 @@ const parseTimes = (timeValue, numberOfPunches) => {
 
 const calculateTimes = (times) => {
   if (!times || times.length === 0) return { inTime: "", outTime: "", totalHours: "" };
-  const inTime = times[0];
-  const outTime = times[times.length - 1];
+  
+  // Filter and Sort
+  const sortedTimes = times.filter(t => t && typeof t === 'string' && t.trim() !== "").sort();
+
+  if (sortedTimes.length === 0) return { inTime: "", outTime: "", totalHours: "" };
+
+  const inTime = sortedTimes[0];
+  const outTime = sortedTimes[sortedTimes.length - 1];
   let totalHours = "";
   try {
     const [inH, inM] = inTime.split(":").map(Number);
@@ -126,12 +132,20 @@ const groupByEmployee = (records) => {
       };
     grouped[key].records.push(record);
     grouped[key].totalRecords++;
-    if (record.hours) {
+    let dailyHours = 0;
+    if (record.punchTimes && record.punchTimes.length > 0) {
+        const { totalHours } = calculateTimes(record.punchTimes);
+        if (totalHours) {
+             const [h, m] = totalHours.split(":").map(Number);
+             dailyHours = h + m / 60;
+        }
+    } else if (record.hours) {
       try {
         const [h, m] = record.hours.split(":").map(Number);
-        grouped[key].totalHours += h + m / 60;
+        dailyHours = h + m / 60;
       } catch (e) {}
     }
+    grouped[key].totalHours += dailyHours;
   });
   Object.keys(grouped).forEach((k) =>
     grouped[k].records.sort((a, b) => {
@@ -580,7 +594,13 @@ export default function AdminDashboard() {
 
     monthlyRecords.forEach(r => {
       let dailyHours = 0;
-      if (r.hours) {
+      if (r.punchTimes && r.punchTimes.length > 0) {
+          const { totalHours } = calculateTimes(r.punchTimes);
+          if (totalHours) {
+              const [h, m] = totalHours.split(":").map(Number);
+              dailyHours = h + (m/60);
+          }
+      } else if (r.hours) {
         const [h, m] = r.hours.split(":").map(Number);
         dailyHours = h + (m/60);
       }
@@ -677,7 +697,10 @@ export default function AdminDashboard() {
     const passedTargetHours = passedWorkingDays * 8;
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
-    const totalLeaves = missingDays.length + leavesCount + zeroDays.length;
+    const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
+    const approvedWeekendCount = monthlyRecords.filter(r => r.weekendApproved).length;
+    // Fix: Subtract granted (paid) leaves from the total leaves count using dynamic count
+    const totalLeaves = (missingDays.length + leavesCount + zeroDays.length) - paidLeavesCount;
 
     // --- SALARY CALCULATION (Admin Specific) ---
     // const employeeId = employeeRecords[0]?.employeeId; (Already defined above)
@@ -687,7 +710,13 @@ export default function AdminDashboard() {
     
     monthlyRecords.forEach(r => {
         let dailyHours = 0;
-        if (r.hours) {
+        if (r.punchTimes && r.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(r.punchTimes);
+            if (totalHours) {
+                 const [h, m] = totalHours.split(":").map(Number);
+                 dailyHours = h + (m/60);
+            }
+        } else if (r.hours) {
            const [h, m] = r.hours.split(":").map(Number);
            dailyHours = h + (m/60);
         }
@@ -751,12 +780,20 @@ export default function AdminDashboard() {
     // New Formula: (Present Days + Weekends)
     // We removed "- totalLeaves" because an absence already results in 0 earnedDays.
     // Subtracting leaves again would be a double penalty.
+    // Fix: Validated that working a weekend should recover lost salary (e.g. from Absences).
+    // So we add 'weekendCount' (Total Weekends) + 'effectivelyEarnedDays' (includes worked Weekend).
+    // This technically double-counts the worked weekend day, but that acts as the "Recovery"/"OT" value.
+    // We then CAP the total at billableDays to ensure it doesn't exceed 100% Monthly Salary.
     let daysForPay = effectivelyEarnedDays + weekendCount;
     
     // APPLY GRANTED LEAVES (User Adjustment)
     // Adding granted leaves effectively pays for those days.
-    daysForPay += (adj.grantedLeaves || 0);
+    // Use dynamic paidLeavesCount for robustness
+    daysForPay += paidLeavesCount;
 
+    // Safety check: Cap at Billable Days (Full Month)
+    daysForPay = Math.min(daysForPay, billableDays);
+    
     // Safety check: Cannot be negative
     if (daysForPay < 0) daysForPay = 0;
 
@@ -772,7 +809,7 @@ export default function AdminDashboard() {
       missingDays,
       shortDays, // Export for UI
       zeroDays, // Export for UI
-      totalLeaves: missingDays.length + leavesCount + zeroDays.length,
+      totalLeaves: (missingDays.length + leavesCount + zeroDays.length) - paidLeavesCount,
       pendingWeekends,
       // Salary specific
       payableSalary,
@@ -785,13 +822,14 @@ export default function AdminDashboard() {
       passedEligibleHours,
       passedDifference: passedEligibleHours - passedTargetHours,
       // Export Adjustments for UI
-      grantedLeaves: adj.grantedLeaves || 0,
+      grantedLeaves: paidLeavesCount, // Export strictly derived value
       grantedHours: adj.grantedHours || 0,
       grantedShortageDates: adj.grantedShortageDates || [],
       // Net Earning Days Logic
-      // Formula: Total Days in Month - Total Leaves
-      netEarningDays: (dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()) - totalLeaves,
-      daysInMonth: dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()
+      // Formula: (DaysInMonth - TotalLeaves) + ApprovedWeekends, CAPPED at DaysInMonth
+      // totalLeaves already handles the Paid Leaves subtraction
+      netEarningDays: Math.min(selectedMonth.daysInMonth(), (selectedMonth.daysInMonth() - totalLeaves) + approvedWeekendCount),
+      daysInMonth: selectedMonth.daysInMonth()
     };
   };
 
@@ -806,12 +844,7 @@ export default function AdminDashboard() {
   /* ================= HELPERS */
   const isValidTime = (t) => /^([0-1]?[0-9]|2[0-5]):[0-5][0-9]$/.test(t); // Fixed regex 20-23
 
-  const calculateTimes = (times) => {
-    // ... (existing logic if any, or placeholder if unused but kept for safety)
-    if (!times || times.length === 0) return { inTime: "", outTime: "", totalHours: "" };
-    const sortedTimes = [...times].sort();
-    return { inTime: sortedTimes[0], outTime: sortedTimes[sortedTimes.length - 1], totalHours: "" }; // Simplified
-  };
+
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-IN', {
@@ -1059,6 +1092,50 @@ export default function AdminDashboard() {
       }
   };
 
+  const handleRevokeShortage = async (record) => {
+      try {
+          const monthStr = selectedMonth.format("YYYY-MM");
+          const key = `${record.employeeId}_${monthStr}`;
+          
+          const currentAdj = adjustments[key] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
+          if (!(currentAdj.grantedShortageDates || []).includes(record.date)) return;
+
+          // Remove date
+          const newGrantedDates = (currentAdj.grantedShortageDates || []).filter(d => d !== record.date);
+          
+          // Calculate shortage to remove (re-calculate or approximate?)
+          // Since we don't store exactly how much was granted for *that specific* date in the array (only dates),
+          // we have to re-derive the shortage amount for that day from the record.
+          let dailyHours = 0;
+          if (record.punchTimes && record.punchTimes.length > 0) {
+                const { totalHours } = calculateTimes(record.punchTimes);
+                if (totalHours) {
+                    const [h, m] = totalHours.split(":").map(Number);
+                    dailyHours = h + (m/60);
+                }
+          } else if (record.hours) {
+                const [h, m] = record.hours.split(":").map(Number);
+                dailyHours = h + (m/60);
+          }
+          const shortageToRemove = Math.max(0, 8 - dailyHours);
+
+          const newGrantedHours = Math.max(0, (currentAdj.grantedHours || 0) - shortageToRemove);
+
+          await setDoc(doc(db, "payroll_adjustments", key), {
+              grantedLeaves: currentAdj.grantedLeaves || 0,
+              grantedHours: newGrantedHours,
+              grantedShortageDates: newGrantedDates,
+              updatedAt: new Date().toISOString()
+          }, { merge: true });
+
+          setAdjustments(prev => ({ ...prev, [key]: { ...currentAdj, grantedHours: newGrantedHours, grantedShortageDates: newGrantedDates } }));
+          message.success(`Revoked grant for ${record.date}`);
+      } catch (e) {
+          console.error(e);
+          message.error("Failed to revoke");
+      }
+  };
+
   
   // Render helper to avoid duplication
   const renderPayrollStats = (payroll, darkMode, employeeInfo = null) => (
@@ -1131,8 +1208,9 @@ export default function AdminDashboard() {
               <Col xs={12} sm={4}>
                   <Statistic 
                     title="Leaves" 
-                    value={payroll.totalLeaves || 0} 
-                    valueStyle={{ fontSize: 20, color: "#faad14", fontWeight: 600 }} 
+                    value={Math.max(0, payroll.totalLeaves)} 
+                    valueStyle={{ fontSize: 20, color: (payroll.paidLeavesCount > 0) ? "#52c41a" : "#faad14", fontWeight: 600 }} 
+                    suffix={payroll.paidLeavesCount > 0 ? <span style={{fontSize:12, color:'#888', marginLeft:5}}>(-{payroll.paidLeavesCount} Pd)</span> : null}
                   />
               </Col>
               
@@ -1258,6 +1336,7 @@ export default function AdminDashboard() {
 
 
   /* ================= HELPERS & COLUMNS ================= */
+  /* ================= HELPERS & COLUMNS ================= */
   const formatDuration = (hoursDecimal) => {
     if (!hoursDecimal || hoursDecimal <= 0) return "0:00:00";
     const h = Math.floor(hoursDecimal);
@@ -1271,36 +1350,52 @@ export default function AdminDashboard() {
     return d.isValid() ? d.format("dddd, MMMM DD, YYYY") : dateStr;
   };
 
-  const columns = [
-    { title: "Employee", dataIndex: "employee", key: "employee", width: 180, fixed: "left", render: (_, r) => <div style={{fontWeight:600}}>{r.firstName || r.employee || "N/A"}</div> },
-    { title: "Date", dataIndex: "fullDate", key: "fullDate", width: 220, fixed: "left", render: (t, r) => <span>{t} {r.isGranted && <Tag color="gold" style={{marginLeft:4}}>Granted</Tag>}</span> },
-    { title: "In 1", dataIndex: "in1", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
-    { title: "Out 1", dataIndex: "out1", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
-    { title: "In 2", dataIndex: "in2", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
-    { title: "Out 2", dataIndex: "out2", width: 90, align: "center", render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span> },
-    { title: "In 3", dataIndex: "in3", width: 90, align: "center" },
-    { title: "Total Hours", dataIndex: "targetHoursFormatted", width: 100, align: "center" },
-    { title: "Present Hours", dataIndex: "presentHoursFormatted", width: 120, align: "center" },
-    { title: "Hours Short by", dataIndex: "hoursShortByFormatted", width: 120, align: "center" },
-    { title: "Present Days", dataIndex: "presentDays", width: 100, align: "center", render: (v) => <span style={{ color: v ? "green" : "red" }}>{v}</span> },
-    { title: "Leave check", dataIndex: "leaveCheck", width: 100, align: "center" },
-    { title: "Day Swap off", dataIndex: "daySwapOff", width: 100, align: "center" },
-    { title: "Weekend Checks", dataIndex: "weekendCheck", width: 120, align: "center", render: (v) => v ? 1 : 0 },
-    { title: "Paid Holidays", dataIndex: "paidHolidays", width: 100, align: "center" },
-    { title: "Action", key: "action", width: 120, fixed: "right", render: (_, r) => {
-        if (r.isMissing) return null; 
-        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
-        const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
-        const showApproveBtn = isWeekend && !r.weekendApproved;
+  const generateColumns = (maxPairs) => {
+      const punchCols = [];
+      for (let i = 0; i < maxPairs; i++) {
+          punchCols.push({
+              title: `In ${i + 1}`,
+              dataIndex: ["sortedPunches", i * 2],
+              width: 90,
+              align: "center",
+              render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span>
+          });
+          punchCols.push({
+              title: `Out ${i + 1}`,
+              dataIndex: ["sortedPunches", i * 2 + 1],
+              width: 90,
+              align: "center",
+              render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span>
+          });
+      }
 
-        return (
-            <div style={{ display: 'flex', gap: 4 }}>
-                <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
-                {showApproveBtn && <Button type="primary" size="small" onClick={() => handleApproveWeekend(r.id)}>Approve</Button>}
-            </div>
-        );
-    }},
-  ];
+      return [
+        { title: "Employee", dataIndex: "employee", key: "employee", width: 180, fixed: "left", render: (_, r) => <div style={{fontWeight:600}}>{r.firstName || r.employee || "N/A"}</div> },
+        { title: "Date", dataIndex: "fullDate", key: "fullDate", width: 220, fixed: "left", render: (t, r) => <span>{t} {r.isGranted && <Popconfirm title="Revoke this grant?" onConfirm={() => handleRevokeShortage(r)}><Tag color="gold" style={{marginLeft:4, cursor: "pointer"}}>Granted</Tag></Popconfirm>}</span> },
+        ...punchCols,
+        { title: "Total Hours", dataIndex: "targetHoursFormatted", width: 100, align: "center" },
+        { title: "Present Hours", dataIndex: "presentHoursFormatted", width: 120, align: "center" },
+        { title: "Hours Short by", dataIndex: "hoursShortByFormatted", width: 120, align: "center" },
+        { title: "Present Days", dataIndex: "presentDays", width: 100, align: "center", render: (v) => <span style={{ color: v ? "green" : "red" }}>{v}</span> },
+        { title: "Leave check", dataIndex: "leaveCheck", width: 100, align: "center" },
+        { title: "Day Swap off", dataIndex: "daySwapOff", width: 100, align: "center" },
+        { title: "Weekend Checks", dataIndex: "weekendCheck", width: 120, align: "center", render: (v) => v ? 1 : 0 },
+        { title: "Paid Holidays", dataIndex: "paidHolidays", width: 100, align: "center" },
+        { title: "Action", key: "action", width: 120, fixed: "right", render: (_, r) => {
+            if (r.isMissing) return null; 
+            const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
+            const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+            const showApproveBtn = isWeekend && !r.weekendApproved;
+
+            return (
+                <div style={{ display: 'flex', gap: 4 }}>
+                    <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
+                    {showApproveBtn && <Button type="primary" size="small" onClick={() => handleApproveWeekend(r.id)}>Approve</Button>}
+                </div>
+            );
+        }},
+      ];
+  };
 
   const filteredRecords = React.useMemo(() => {
     if (!selectedMonth) return [];
@@ -1402,9 +1497,14 @@ export default function AdminDashboard() {
                         <Panel header={`View ${emp.records.length} Record(s)`} key="1">
                           <div style={{ maxHeight: 400, overflowY: "auto" }}>
                             {emp.records.map((rec, idx) => {
-                                // Record Logic Calculation for UI
                                 let dailyHours = 0;
-                                if (rec.hours) {
+                                if (rec.punchTimes && rec.punchTimes.length > 0) {
+                                    const { totalHours } = calculateTimes(rec.punchTimes);
+                                    if (totalHours) {
+                                        const [h, m] = totalHours.split(":").map(Number);
+                                        dailyHours = h + (m/60);
+                                    }
+                                } else if (rec.hours) {
                                     const [h, m] = rec.hours.split(":").map(Number);
                                     dailyHours = h + (m/60);
                                 }
@@ -1535,16 +1635,17 @@ export default function AdminDashboard() {
                       const isGranted = (payroll.grantedShortageDates || []).includes(r.date);
 
                       // Punches
-                      const punches = (r.punchTimes || []).sort();
-                      const in1 = punches[0] || "";
-                      const out1 = punches[1] || "";
-                      const in2 = punches[2] || "";
-                      const out2 = punches[3] || "";
-                      const in3 = punches[4] || "";
+                      const sortedPunches = (r.punchTimes || []).sort();
 
                       // Hours
                       let dailyHours = 0;
-                      if (r.hours) {
+                      if (r.punchTimes && r.punchTimes.length > 0) {
+                        const { totalHours } = calculateTimes(r.punchTimes);
+                        if (totalHours) {
+                            const [h, m] = totalHours.split(":").map(Number);
+                            dailyHours = h + (m/60);
+                        }
+                      } else if (r.hours) {
                         const [h, m] = r.hours.split(":").map(Number);
                         dailyHours = h + (m/60);
                       }
@@ -1557,7 +1658,7 @@ export default function AdminDashboard() {
                       return {
                           ...r,
                           fullDate: getDayOfWeek(r.date),
-                          in1, out1, in2, out2, in3,
+                          sortedPunches,
                           targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
                           presentHoursFormatted: formatDuration(dailyHours),
                           hoursShortByFormatted: formatDuration(hoursShortBy),
@@ -1569,6 +1670,10 @@ export default function AdminDashboard() {
                           isGranted
                       };
                   });
+
+                  const maxPunches = Math.max(0, ...combinedRecords.map(r => (r.sortedPunches || []).length));
+                  const maxPairs = Math.max(3, Math.ceil(maxPunches / 2));
+                  const dynamicColumns = generateColumns(maxPairs);
 
                   return (
                   <TabPane tab={emp.employeeName || emp.employee || emp.employeeId} key={key}>
@@ -1618,7 +1723,7 @@ export default function AdminDashboard() {
 
                     {renderPayrollStats(payroll, darkMode, emp)}
                     <Table
-                      columns={columns}
+                      columns={dynamicColumns}
                       dataSource={combinedRecords}
                       rowKey={(rec) => rec.id || `${rec.employeeId || rec.employee}-${rec.date}`}
                       bordered
