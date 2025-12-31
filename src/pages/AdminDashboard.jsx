@@ -123,7 +123,6 @@ const calculateTimes = (times) => {
   };
 };
 
-
 const groupByEmployee = (records) => {
   const grouped = {};
   records.forEach((record) => {
