@@ -86,36 +86,43 @@ const getField = (row, variants = []) => {
   return "";
 };
 
-const parseTimes = (timeValue, numberOfPunches) => {
-  if (!timeValue) return [];
-  let times = [];
-  if (Array.isArray(timeValue)) timeValue = timeValue.filter((v) => v && v.trim()).join(", ");
-  if (typeof timeValue === "string") {
-    times = timeValue.split(",").map((t) => t.trim()).filter((t) => t && t.match(/^\d{1,2}:\d{2}$/));
-  }
-  if (numberOfPunches && numberOfPunches > 0) times = times.slice(0, numberOfPunches);
-  return times;
-};
-
 const calculateTimes = (times) => {
-  if (!times || times.length === 0) return { inTime: "", outTime: "", totalHours: "" };
-  
-  // Filter and Sort
-  const sortedTimes = times.filter(t => t && typeof t === 'string' && t.trim() !== "").sort();
+  if (!Array.isArray(times) || times.length < 2) {
+    return { inTime: "", outTime: "", totalHours: "0:00" };
+  }
 
-  if (sortedTimes.length === 0) return { inTime: "", outTime: "", totalHours: "" };
+  // Keep original order, only clean
+  const cleanTimes = times
+    .filter(t => typeof t === "string" && /^\d{1,2}:\d{2}$/.test(t));
 
-  const inTime = sortedTimes[0];
-  const outTime = sortedTimes[sortedTimes.length - 1];
-  let totalHours = "";
-  try {
-    const [inH, inM] = inTime.split(":").map(Number);
-    const [outH, outM] = outTime.split(":").map(Number);
-    const minutes = outH * 60 + outM - (inH * 60 + inM);
-    totalHours = minutes > 0 ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}` : "0:00";
-  } catch (e) {}
-  return { inTime, outTime, totalHours };
+  if (cleanTimes.length < 2) {
+    return { inTime: "", outTime: "", totalHours: "0:00" };
+  }
+
+  let totalMinutes = 0;
+
+  for (let i = 0; i < cleanTimes.length - 1; i += 2) {
+    const [inH, inM] = cleanTimes[i].split(":").map(Number);
+    const [outH, outM] = cleanTimes[i + 1].split(":").map(Number);
+
+    const inMinutes = inH * 60 + inM;
+    const outMinutes = outH * 60 + outM;
+
+    if (outMinutes > inMinutes) {
+      totalMinutes += outMinutes - inMinutes;
+    }
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return {
+    inTime: cleanTimes[0],
+    outTime: cleanTimes[cleanTimes.length - 1],
+    totalHours: `${hours}:${String(minutes).padStart(2, "0")}`
+  };
 };
+
 
 const groupByEmployee = (records) => {
   const grouped = {};
