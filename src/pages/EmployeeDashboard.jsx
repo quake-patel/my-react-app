@@ -136,7 +136,7 @@ export default function EmployeeDashboard() {
         fetchMyData();
         fetchHolidays();
     }
-  }, [userEmail]); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail]);  
 
   /* ================= FETCH ================= */
     const fetchHolidays = async () => {
@@ -232,7 +232,9 @@ export default function EmployeeDashboard() {
           const isWeekend = d.day() === 0 || d.day() === 6;
 
           // Rules Check
-          if (dailyHours >= 3) { // Assuming 3 hours min rule
+
+          // Rules Check - Removed 3h threshold to match AdminDashboard
+          // if (dailyHours >= 3) { 
               let hoursToAdd = 0;
               if (isWeekend) {
                   if (r.weekendApproved) {
@@ -248,7 +250,7 @@ export default function EmployeeDashboard() {
               if (d.isSameOrBefore(today, 'day')) {
                   passedEligibleHours += hoursToAdd;
               }
-          }
+          // }
           
           // Short Days Logic
           // isGranted is already calculated above

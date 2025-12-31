@@ -23,7 +23,8 @@ import {
   DatePicker,
   List,
   Grid,
-  Typography
+  Typography,
+  Popconfirm
 } from "antd";
 
 
@@ -84,6 +85,17 @@ const getField = (row, variants = []) => {
     }
   }
   return "";
+};
+
+const parseTimes = (timeValue, numberOfPunches) => {
+  if (!timeValue) return [];
+  let times = [];
+  if (Array.isArray(timeValue)) timeValue = timeValue.filter((v) => v && v.trim()).join(", ");
+  if (typeof timeValue === "string") {
+    times = timeValue.split(",").map((t) => t.trim()).filter((t) => t && t.match(/^\d{1,2}:\d{2}$/));
+  }
+  if (numberOfPunches && numberOfPunches > 0) times = times.slice(0, numberOfPunches);
+  return times;
 };
 
 const calculateTimes = (times) => {
@@ -627,26 +639,33 @@ export default function AdminDashboard() {
           const isWeekend = d.day() === 0 || d.day() === 6;
 
           // Rules Check
-          if (dailyHours >= 3) {
-             // Weekend Rule
-             let hoursToAdd = 0;
-             if (isWeekend) {
-                 if (r.weekendApproved) {
-                     hoursToAdd = dailyHours;
-                 } else {
-                     pendingWeekends.push({ ...r, dailyHours });
-                 }
-             } else {
-                 hoursToAdd = dailyHours;
-             }
-             
-             eligibleHours += hoursToAdd;
 
-             // Passed Hours (if day is <= today)
-             if (d.isSameOrBefore(today, 'day')) {
-                 passedEligibleHours += hoursToAdd;
-             }
-          }
+              // Removed 3-hour threshold check as per user request
+              // Weekend Rule
+              let hoursToAdd = 0;
+              if (isWeekend) {
+                   if (r.weekendApproved) {
+                       hoursToAdd = dailyHours;
+                   } else {
+                       // pendingWeekends.push({ ...r, dailyHours }); 
+                       // Note: Pending weekends are pushed in the original logic too? 
+                       // Actually, let's keep the pending push logic if logic requires it.
+                       // The original code pushed to pendingWeekends inside the 3h check. 
+                       // Does the user want low hours weekend work to show as pending? Probably yes.
+                       if (!r.weekendApproved) {
+                           pendingWeekends.push({ ...r, dailyHours });
+                       }
+                   }
+              } else {
+                  hoursToAdd = dailyHours;
+              }
+              
+              eligibleHours += hoursToAdd;
+
+              // Passed Hours (if day is <= today)
+              if (d.isSameOrBefore(today, 'day')) {
+                  passedEligibleHours += hoursToAdd;
+              }
           
           // Short Days Logic
           // Granted days now have dailyHours = 8, so they won't trigger this.
@@ -1414,6 +1433,178 @@ export default function AdminDashboard() {
 
   const employeeGroups = groupByEmployee(filteredRecords);
 
+  const tabItems = Object.entries(employeeGroups).map(([key, emp]) => {
+                  const payroll = getMonthlyPayroll(emp.records, emp.employeeId);
+                  
+                  // Compute Combined Records (Actual + Missing)
+                  const missing = (payroll.missingDays || []).map(date => ({
+                        id: `missing-${date}`,
+                        date: date,
+                        employee: emp.employeeName,
+                        employeeId: emp.employeeId,
+                        department: emp.department,
+                        numberOfPunches: 0,
+                        punchTimes: [],
+                        inTime: "-",
+                        outTime: "-",
+                        hours: "0:00",
+                        isMissing: true
+                  }));
+                  
+                  let combinedRecords = [...emp.records, ...missing];
+                  
+                  // Sort Descending -> User asked for Table View generally sorted, but EmployeeDashboard was sorted Ascending (Chronological).
+                  // Admin usually wants to see list... but Chronological is better for specific Employee View.
+                  // Let's sort ASCENDING for the detailed table view of an employee
+                  combinedRecords.sort((a, b) => {
+                    const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                    const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                    if (!dateA.isValid()) return 1; 
+                    if (!dateB.isValid()) return -1;
+                    return dateA.valueOf() - dateB.valueOf(); 
+                  });
+
+                  // Process for Table display (add helper fields)
+                  combinedRecords = combinedRecords.map(r => {
+                      const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                      const dayOfWeekIndex = d.day();
+                      const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
+                      const isGranted = (payroll.grantedShortageDates || []).includes(r.date);
+
+                      // Punches
+                      const sortedPunches = (r.punchTimes || []).sort();
+
+                      // Hours
+                      let dailyHours = 0;
+                      if (r.punchTimes && r.punchTimes.length > 0) {
+                        const { totalHours } = calculateTimes(r.punchTimes);
+                        if (totalHours) {
+                            const [h, m] = totalHours.split(":").map(Number);
+                            dailyHours = h + (m/60);
+                        }
+                      } else if (r.hours) {
+                        const [h, m] = r.hours.split(":").map(Number);
+                        dailyHours = h + (m/60);
+                      }
+                      
+                      const targetHours = isWeekend ? 0 : 8;
+                      const shortfall = targetHours - dailyHours;
+                      const hoursShortBy = shortfall > 0 ? shortfall : 0;
+                      const presentDayCount = dailyHours > 0 ? 1 : 0; 
+
+                      return {
+                          ...r,
+                          fullDate: getDayOfWeek(r.date),
+                          sortedPunches,
+                          targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
+                          presentHoursFormatted: formatDuration(dailyHours),
+                          hoursShortByFormatted: formatDuration(hoursShortBy),
+                          presentDays: presentDayCount,
+                          leaveCheck: r.isLeave ? 1 : 0,
+                          daySwapOff: 0,
+                          weekendCheck: isWeekend ? 1 : 0,
+                          paidHolidays: 0,
+                          isGranted
+                      };
+                  });
+
+                  const maxPunches = Math.max(0, ...combinedRecords.map(r => (r.sortedPunches || []).length));
+                  const maxPairs = Math.max(3, Math.ceil(maxPunches / 2));
+                  const dynamicColumns = generateColumns(maxPairs);
+
+                  return {
+                  key: key,
+                  label: emp.employeeName || emp.employee || emp.employeeId,
+                  children: (
+                    <>
+                    {/* Incentive Section for Table View */}
+                    <div style={{ marginBottom: 16, display: "flex", justifyContent: "flex-end", alignItems: "start", gap: 10 }}>
+                        {showSalary && (
+                        <div style={{ textAlign: "right", marginRight: 20 }}>
+                            <div style={{ fontSize: 13, color: "#888" }}>Estimated Salary</div>
+                            <div style={{ fontSize: 20, fontWeight: "bold", color: "#52c41a" }}>
+                                {formatCurrency(payroll.payableSalary)}
+                                <span style={{ fontSize: 14, color: "#ccc", marginLeft: 5 }}>/ {formatCurrency(payroll.monthlySalary)}</span>
+                            </div>
+                        </div>
+                        )}
+                        
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                 <span style={{ fontWeight: 500 }}>Incentives:</span>
+                                 <Button 
+                                    size="small" 
+                                    type="dashed" 
+                                    icon={<PlusOutlined />} 
+                                    onClick={() => {
+                                        // Simple prompt for now, or use the modal I can resurrect
+                                        // Resorting to a simple prompt to avoid complex state management in this file for now if possible, 
+                                        // OR use the existing Modal logic but tweaked.
+                                        // Let's use a specialized small inline form or reuse the modal.
+                                        // I'll reuse the modal approach for cleaner UX.
+                                        setSelectedEmpForIncentive({ employeeId: emp.employeeId, employeeName: emp.employeeName });
+                                        setIncentiveModalOpen(true);
+                                    }}
+                                 >
+                                     Add
+                                 </Button>
+                             </div>
+                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end", maxWidth: 300 }}>
+                                 {(payroll.incentiveList || []).map((inc, i) => (
+                                     <Tag key={inc.id || i} color="gold" closable onClose={() => handleDeleteIncentive(emp.employeeId, inc.id)}>
+                                         +{inc.amount}
+                                     </Tag>
+                                 ))}
+                                 {(!payroll.incentiveList || payroll.incentiveList.length === 0) && <span style={{fontSize:12, color:'#ccc'}}>None</span>}
+                             </div>
+                        </div>
+                    </div>
+
+                    {renderPayrollStats(payroll, darkMode, emp)}
+                    <Table
+                      columns={dynamicColumns}
+                      dataSource={combinedRecords}
+                      rowKey={(rec) => rec.id || `${rec.employeeId || rec.employee}-${rec.date}`}
+                      bordered
+                      scroll={{ x: 1500 }}
+                      pagination={{ pageSize: 31, showSizeChanger: true }}
+                      rowClassName={(record) => {
+                          if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";
+                          let dailyHours = 0;
+                          if (record.hours) {
+                              const [h, m] = record.hours.split(":").map(Number);
+                              dailyHours = h + (m/60);
+                          }
+                          const d = dayjs(record.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
+                          const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+                          
+                          if (isWeekend) return "weekend-row"; // We need to add styles for these or use style prop
+                          if (dailyHours < 3) return "low-hours-row";
+                          return "";
+                      }}
+                      onRow={(record) => {
+                          let dailyHours = 0;
+                          if (record.hours) {
+                              const [h, m] = record.hours.split(":").map(Number);
+                              dailyHours = h + (m/60);
+                          }
+                          const d = dayjs(record.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
+                          const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+                          
+                          let bg = "";
+                          if (record.isLeave) {
+                              if (record.leaveType === 'Paid') bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
+                              else bg = darkMode ? "#333" : "#fafafa";
+                          } else if (isWeekend) bg = darkMode ? "rgba(212, 177, 6, 0.15)" : "#fffbf0"; 
+                           else if (dailyHours < 3) bg = darkMode ? "rgba(207, 19, 34, 0.15)" : "#fff2f0";
+                           
+                           return { style: { background: bg } };
+                      }}
+                    />
+                    </>
+                  )};
+                });
+
   return (
     <ConfigProvider theme={{ algorithm: darkMode ? darkAlgorithm : defaultAlgorithm }}>
       <Layout style={{ minHeight: "100vh" }}>
@@ -1601,176 +1792,7 @@ export default function AdminDashboard() {
             Object.keys(employeeGroups).length === 0 ? (
               <Empty description="No records found" />
             ) : (
-              <Tabs type="card">
-                {Object.entries(employeeGroups).map(([key, emp]) => {
-                  const payroll = getMonthlyPayroll(emp.records, emp.employeeId);
-                  
-                  // Compute Combined Records (Actual + Missing)
-                  const missing = (payroll.missingDays || []).map(date => ({
-                        id: `missing-${date}`,
-                        date: date,
-                        employee: emp.employeeName,
-                        employeeId: emp.employeeId,
-                        department: emp.department,
-                        numberOfPunches: 0,
-                        punchTimes: [],
-                        inTime: "-",
-                        outTime: "-",
-                        hours: "0:00",
-                        isMissing: true
-                  }));
-                  
-                  let combinedRecords = [...emp.records, ...missing];
-                  
-                  // Sort Descending -> User asked for Table View generally sorted, but EmployeeDashboard was sorted Ascending (Chronological).
-                  // Admin usually wants to see list... but Chronological is better for specific Employee View.
-                  // Let's sort ASCENDING for the detailed table view of an employee
-                  combinedRecords.sort((a, b) => {
-                    const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
-                    const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
-                    if (!dateA.isValid()) return 1; 
-                    if (!dateB.isValid()) return -1;
-                    return dateA.valueOf() - dateB.valueOf(); 
-                  });
-
-                  // Process for Table display (add helper fields)
-                  combinedRecords = combinedRecords.map(r => {
-                      const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
-                      const dayOfWeekIndex = d.day();
-                      const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
-                      const isGranted = (payroll.grantedShortageDates || []).includes(r.date);
-
-                      // Punches
-                      const sortedPunches = (r.punchTimes || []).sort();
-
-                      // Hours
-                      let dailyHours = 0;
-                      if (r.punchTimes && r.punchTimes.length > 0) {
-                        const { totalHours } = calculateTimes(r.punchTimes);
-                        if (totalHours) {
-                            const [h, m] = totalHours.split(":").map(Number);
-                            dailyHours = h + (m/60);
-                        }
-                      } else if (r.hours) {
-                        const [h, m] = r.hours.split(":").map(Number);
-                        dailyHours = h + (m/60);
-                      }
-                      
-                      const targetHours = isWeekend ? 0 : 8;
-                      const shortfall = targetHours - dailyHours;
-                      const hoursShortBy = shortfall > 0 ? shortfall : 0;
-                      const presentDayCount = dailyHours > 0 ? 1 : 0; 
-
-                      return {
-                          ...r,
-                          fullDate: getDayOfWeek(r.date),
-                          sortedPunches,
-                          targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
-                          presentHoursFormatted: formatDuration(dailyHours),
-                          hoursShortByFormatted: formatDuration(hoursShortBy),
-                          presentDays: presentDayCount,
-                          leaveCheck: r.isLeave ? 1 : 0,
-                          daySwapOff: 0,
-                          weekendCheck: isWeekend ? 1 : 0,
-                          paidHolidays: 0,
-                          isGranted
-                      };
-                  });
-
-                  const maxPunches = Math.max(0, ...combinedRecords.map(r => (r.sortedPunches || []).length));
-                  const maxPairs = Math.max(3, Math.ceil(maxPunches / 2));
-                  const dynamicColumns = generateColumns(maxPairs);
-
-                  return (
-                  <TabPane tab={emp.employeeName || emp.employee || emp.employeeId} key={key}>
-                    
-                    {/* Incentive Section for Table View */}
-                    <div style={{ marginBottom: 16, display: "flex", justifyContent: "flex-end", alignItems: "start", gap: 10 }}>
-                        {showSalary && (
-                        <div style={{ textAlign: "right", marginRight: 20 }}>
-                            <div style={{ fontSize: 13, color: "#888" }}>Estimated Salary</div>
-                            <div style={{ fontSize: 20, fontWeight: "bold", color: "#52c41a" }}>
-                                {formatCurrency(payroll.payableSalary)}
-                                <span style={{ fontSize: 14, color: "#ccc", marginLeft: 5 }}>/ {formatCurrency(payroll.monthlySalary)}</span>
-                            </div>
-                        </div>
-                        )}
-                        
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                 <span style={{ fontWeight: 500 }}>Incentives:</span>
-                                 <Button 
-                                    size="small" 
-                                    type="dashed" 
-                                    icon={<PlusOutlined />} 
-                                    onClick={() => {
-                                        // Simple prompt for now, or use the modal I can resurrect
-                                        // Resorting to a simple prompt to avoid complex state management in this file for now if possible, 
-                                        // OR use the existing Modal logic but tweaked.
-                                        // Let's use a specialized small inline form or reuse the modal.
-                                        // I'll reuse the modal approach for cleaner UX.
-                                        setSelectedEmpForIncentive({ employeeId: emp.employeeId, employeeName: emp.employeeName });
-                                        setIncentiveModalOpen(true);
-                                    }}
-                                 >
-                                     Add
-                                 </Button>
-                             </div>
-                             <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end", maxWidth: 300 }}>
-                                 {(payroll.incentiveList || []).map((inc, i) => (
-                                     <Tag key={inc.id || i} color="gold" closable onClose={() => handleDeleteIncentive(emp.employeeId, inc.id)}>
-                                         +{inc.amount}
-                                     </Tag>
-                                 ))}
-                                 {(!payroll.incentiveList || payroll.incentiveList.length === 0) && <span style={{fontSize:12, color:'#ccc'}}>None</span>}
-                             </div>
-                        </div>
-                    </div>
-
-                    {renderPayrollStats(payroll, darkMode, emp)}
-                    <Table
-                      columns={dynamicColumns}
-                      dataSource={combinedRecords}
-                      rowKey={(rec) => rec.id || `${rec.employeeId || rec.employee}-${rec.date}`}
-                      bordered
-                      scroll={{ x: 1500 }}
-                      pagination={{ pageSize: 31, showSizeChanger: true }}
-                      rowClassName={(record) => {
-                          if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";
-                          let dailyHours = 0;
-                          if (record.hours) {
-                              const [h, m] = record.hours.split(":").map(Number);
-                              dailyHours = h + (m/60);
-                          }
-                          const d = dayjs(record.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
-                          const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
-                          
-                          if (isWeekend) return "weekend-row"; // We need to add styles for these or use style prop
-                          if (dailyHours < 3) return "low-hours-row";
-                          return "";
-                      }}
-                      onRow={(record) => {
-                          let dailyHours = 0;
-                          if (record.hours) {
-                              const [h, m] = record.hours.split(":").map(Number);
-                              dailyHours = h + (m/60);
-                          }
-                          const d = dayjs(record.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
-                          const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
-                          
-                          let bg = "";
-                          if (record.isLeave) {
-                              if (record.leaveType === 'Paid') bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
-                              else bg = darkMode ? "#333" : "#fafafa";
-                          } else if (isWeekend) bg = darkMode ? "rgba(212, 177, 6, 0.15)" : "#fffbf0"; 
-                           else if (dailyHours < 3) bg = darkMode ? "rgba(207, 19, 34, 0.15)" : "#fff2f0";
-                           
-                           return { style: { background: bg } };
-                      }}
-                    />
-                  </TabPane>
-                )})}
-              </Tabs>
+              <Tabs type="card" items={tabItems} />
             )
           )}
 

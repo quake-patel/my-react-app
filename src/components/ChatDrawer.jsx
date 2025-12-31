@@ -310,7 +310,7 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
       open={open}
       width={drawerWidth}
       extra={selectedUser && <Button type="link" onClick={() => setSelectedUser(null)}>Back</Button>}
-      bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column' }}
+      styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
     >
         {renderContent()}
     </Drawer>

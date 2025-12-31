@@ -226,8 +226,9 @@ export default function SuperEmployeeDashboard() {
           const isWeekend = d.day() === 0 || d.day() === 6;
 
           // Rules Check
-          if (dailyHours >= 3) {
-             // Weekend Rule
+
+          // Rules Check - Removed 3h threshold to match AdminDashboard
+          // if (dailyHours >= 3) {
              let hoursToAdd = 0;
              if (isWeekend) {
                  if (r.weekendApproved) {
@@ -243,7 +244,7 @@ export default function SuperEmployeeDashboard() {
              if (d.isSameOrBefore(today, 'day')) {
                  passedEligibleHours += hoursToAdd;
              }
-         }
+         // }
 
           // Short Days Logic
           // isGranted is calculated above. dailyHours is updated to 8 if granted.
@@ -333,7 +334,6 @@ export default function SuperEmployeeDashboard() {
       passedWorkingDays,
       passedTargetHours,
       passedEligibleHours,
-      passedDifference: passedEligibleHours - passedTargetHours,
       passedDifference: passedEligibleHours - passedTargetHours,
       // Net Earning Days Logic
       netEarningDays: (dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()) - totalLeaves,
