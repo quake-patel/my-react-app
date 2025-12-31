@@ -202,7 +202,7 @@ export default function EmployeeDashboard() {
 
 
     const currentMonthAdj = adjustments[selectedMonth.format("YYYY-MM")] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
-
+ 
     monthlyRecords.forEach(r => {
       let dailyHours = 0;
       // Calculate from Punch Times if available
