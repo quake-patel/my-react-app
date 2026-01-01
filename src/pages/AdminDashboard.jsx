@@ -359,7 +359,6 @@ export default function AdminDashboard() {
       skipEmptyLines: true,
       transformHeader: (h) => h.trim(),
       complete: async (results) => {
-        const punchesRef = collection(db, "punches");
         let successCount = 0;
         for (let i = 0; i < results.data.length; i++) {
           const row = results.data[i];
@@ -382,8 +381,10 @@ export default function AdminDashboard() {
           const punchTimes = parseTimes(timeValue, numberOfPunches);
           const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
           
-          // Unique ID for idempotency
-          const uniqueId = `${employeeId}_${date}`;
+          // Unique ID for idempotency - SANITIZED to avoid path issues
+          const safeEmpId = (employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+          const safeDate = (date || "").replace(/[^a-zA-Z0-9-]/g, "_");
+          const uniqueId = `${safeEmpId}_${safeDate}`;
 
           const docData = {
             employeeId: employeeId || "",
@@ -409,7 +410,7 @@ export default function AdminDashboard() {
         }
         setUploading(false);
         fetchData();
-        message.success(`${successCount} rows uploaded`);
+        message.success(`${successCount} rows processed successfully`);
       },
       error: (err) => {
         console.error(err);
@@ -723,7 +724,6 @@ export default function AdminDashboard() {
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
     const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
-    const approvedWeekendCount = monthlyRecords.filter(r => r.weekendApproved).length;
     // Fix: Subtract granted (paid) leaves from the total leaves count using dynamic count
     const totalLeaves = (missingDays.length + leavesCount + zeroDays.length) - paidLeavesCount;
 
@@ -851,9 +851,8 @@ export default function AdminDashboard() {
       grantedHours: adj.grantedHours || 0,
       grantedShortageDates: adj.grantedShortageDates || [],
       // Net Earning Days Logic
-      // Formula: (DaysInMonth - TotalLeaves) + ApprovedWeekends, CAPPED at DaysInMonth
-      // totalLeaves already handles the Paid Leaves subtraction
-      netEarningDays: Math.min(selectedMonth.daysInMonth(), (selectedMonth.daysInMonth() - totalLeaves) + approvedWeekendCount),
+      // Updated to match Employee/SuperEmployee Logic: Use Calculated Days for Pay
+      netEarningDays: daysForPay,
       daysInMonth: selectedMonth.daysInMonth()
     };
   };
@@ -1567,6 +1566,7 @@ export default function AdminDashboard() {
                       rowKey={(rec) => rec.id || `${rec.employeeId || rec.employee}-${rec.date}`}
                       bordered
                       scroll={{ x: 1500 }}
+                      sticky
                       pagination={{ pageSize: 31, showSizeChanger: true }}
                       rowClassName={(record) => {
                           if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";
@@ -1631,7 +1631,7 @@ export default function AdminDashboard() {
           <Row gutter={[16, 16]} justify="space-between" align="middle" style={{ marginBottom: 16 }}>
             <Col xs={24} lg={16}>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <Upload beforeUpload={handleFileUpload} showUploadList={false}>
+                    <Upload beforeUpload={handleFileUpload} showUploadList={false} accept=".csv">
                         <Button type="primary" icon={<UploadOutlined />} loading={uploading}>Upload CSV</Button>
                     </Upload>
                     <DatePicker.MonthPicker 

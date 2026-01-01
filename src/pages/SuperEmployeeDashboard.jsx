@@ -305,23 +305,38 @@ export default function SuperEmployeeDashboard() {
     const passedTargetHours = passedWorkingDays * 8;
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
+    const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
     const totalLeaves = missingDays.length + leavesCount;
 
-    // Assuming monthlySalary is available in this scope, e.g., passed as an argument or from state/context
-    // if (daysForPay < 0) daysForPay = 0;
+    // --- SALARY / NET EARNING DAYS CALCULATION ---
+    // Fix: Use earnedDays (calculated in loop) to account for Half Days / Short Days
+    // Logic: Earned Days (from Work) + Paid Leaves + Weekends (Paid)
     
-    // let payableSalary = daysForPay * dailyRate;
+    // Fix for "High Hours but Low Days" (similar to AdminDashboard)
+    let effectivelyEarnedDays = earnedDays;
+    if (eligibleHours >= targetHours && workingDays > 0) {
+        effectivelyEarnedDays = presentDaysCount;
+    }
 
-    // Apply Granted Hours - REMOVED (Handled in loop)
-    // actualHours += (currentMonthAdj.grantedHours || 0);
-    // eligibleHours += (currentMonthAdj.grantedHours || 0); 
-    // passedEligibleHours += (currentMonthAdj.grantedHours || 0);
-
-    // Calculate Net Earning Days
-    // Formula: Total Days in Month - Total Leaves
-    const daysInMonth = selectedMonth.daysInMonth();
-    const netEarningDays = daysInMonth - totalLeaves;
-
+    let netEarningDays = effectivelyEarnedDays + weekendCount + paidLeavesCount;
+    
+    // Cap at days in month (or billable days)
+    const daysInMonth = dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth();
+    netEarningDays = Math.min(netEarningDays, selectedMonth.daysInMonth()); // Logical Cap
+    
+    // If we are in the current month, we probably shouldn't cap at "daysInMonth" (30/31) if we haven't reached there,
+    // BUT "earnedDays" only accumulates for passed days anyway. 
+    // However, "weekendCount" counts ALL weekends in the month loop?
+    // Let's check the weekendCount loop.
+    // In the loop above: `while (curr.isSameOrBefore(end))` -> loops entire month. 
+    // So weekendCount includes future weekends.
+    // If looking at "Net Earning Days" for salary *projection*, full weekends is correct.
+    // If looking at "Passed Earning Days", we'd need passed weekends.
+    // "Net Earning Days" usually implies the projected total for the month if no more cuts happen? 
+    // OR "What I have earned SO FAR".
+    // User complaint "hours are less but net earning days are 28" implies they expect it to be lower.
+    // If usage is "Month End" salary calc, then including all weekends is correct.
+    
     return {
       workingDays,
       targetHours,
@@ -336,8 +351,8 @@ export default function SuperEmployeeDashboard() {
       passedEligibleHours,
       passedDifference: passedEligibleHours - passedTargetHours,
       // Net Earning Days Logic
-      netEarningDays: (dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()) - totalLeaves,
-      daysInMonth: dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()
+      netEarningDays: netEarningDays,
+      daysInMonth: selectedMonth.daysInMonth()
     };
   };
 
@@ -906,6 +921,7 @@ export default function SuperEmployeeDashboard() {
                 dataSource={dataSource}
                 rowKey="id"
                 scroll={{ x: 1500 }}
+                sticky
                 pagination={false}
                 rowClassName={(record) => {
                     if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";

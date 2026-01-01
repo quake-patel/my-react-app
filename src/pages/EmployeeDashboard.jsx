@@ -324,36 +324,24 @@ export default function EmployeeDashboard() {
     const passedTargetHours = passedWorkingDays * 8;
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
+    const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
     const totalLeaves = missingDays.length + leavesCount;
 
-    // Salary Calculation (Sync with Admin)
-    // Assuming monthlySalary is available in scope (passed or placeholder)
-    // In real app, this should come from props or context if dynamic
-    const monthlySalary = 20000; // Placeholder
-    const billableDays = workingDays + weekendCount; 
-    const dailyRate = billableDays > 0 ? monthlySalary / billableDays : 0;
-
-    let effectivelyEarnedDays = earnedDays;
+    // --- SALARY / NET EARNING DAYS CALCULATION ---
+    // Fix: Use earnedDays (calculated in loop) to account for Half Days / Short Days
+    // Logic: Earned Days (from Work) + Paid Leaves + Weekends (Paid)
     
-    // High Hours Protection
+    // Fix for "High Hours but Low Days" (similar to AdminDashboard)
+    let effectivelyEarnedDays = earnedDays;
     if (eligibleHours >= targetHours && workingDays > 0) {
         effectivelyEarnedDays = presentDaysCount;
     }
 
-    // "present days (effectivelyEarnedDays) + add saturday and sunday (weekendCount)"
-    // Removed "- totalLeaves" to avoid double penalty for absences
-    let daysForPay = effectivelyEarnedDays + weekendCount;
-    if (daysForPay < 0) daysForPay = 0;
+    let netEarningDays = effectivelyEarnedDays + weekendCount + paidLeavesCount;
     
-    let payableSalary = daysForPay * dailyRate;
-
-    const passedDifference = passedEligibleHours - passedTargetHours;
-
-    // Calculate Net Earning Days
-    // Formula: Total Days in Month - Total Leaves
-    // (This automatically includes weekends and holidays as earning days unless marked as leave)
-    const daysInMonth = selectedMonth.daysInMonth();
-    const netEarningDays = daysInMonth - totalLeaves;
+    // Cap at days in month (or billable days)
+    const daysInMonth = dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth();
+    netEarningDays = Math.min(netEarningDays, selectedMonth.daysInMonth()); // Logical Cap
 
     return {
       workingDays,
@@ -367,15 +355,14 @@ export default function EmployeeDashboard() {
       passedWorkingDays,
       passedTargetHours,
       passedEligibleHours,
-      passedDifference,
-      weekendCount,
-      earnedDays,
-      payableSalary,
+      passedDifference: passedEligibleHours - passedTargetHours,
       // Net Earning Days Logic
-      netEarningDays: (dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()) - totalLeaves,
-      daysInMonth: dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth()
+      netEarningDays: netEarningDays,
+      daysInMonth: selectedMonth.daysInMonth()
     };
   };
+
+
 
   /* ================= RENDER HELPERS ================= */
   const renderPayrollStats = (payroll) => (
@@ -847,6 +834,7 @@ export default function EmployeeDashboard() {
             dataSource={dataSource}
             rowKey="id"
             scroll={{ x: 1500 }}
+            sticky
             pagination={false}
             rowClassName={(record) => {
                 if (record.isMissing) return darkMode ? "dark-missing-row" : "light-missing-row";
