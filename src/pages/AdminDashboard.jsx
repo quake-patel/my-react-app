@@ -24,7 +24,12 @@ import {
   List,
   Grid,
   Typography,
-  Popconfirm
+  Popconfirm,
+  Select,
+  Radio,
+  Space,
+  Dropdown,
+  Menu
 } from "antd";
 
 
@@ -200,6 +205,11 @@ export default function AdminDashboard() {
   const [salaries, setSalaries] = useState({});
   const [showSalary, setShowSalary] = useState(false);
   const [salaryModalOpen, setSalaryModalOpen] = useState(false);
+  
+  // Swap Feature States
+  const [swapModalOpen, setSwapModalOpen] = useState(false);
+  const [swapTarget, setSwapTarget] = useState(null); // { weekendRecordId, employeeInfo, absenceDates }
+  const [swapForm] = Form.useForm();
   const [salaryForm] = Form.useForm();
   const [incentives, setIncentives] = useState({});
   const [incentiveModalOpen, setIncentiveModalOpen] = useState(false);
@@ -596,11 +606,29 @@ export default function AdminDashboard() {
     DEFAULT_HOLIDAYS.forEach(d => { if(!holidayDates.includes(d)) holidayDates.push(d) });
     
     // Filter records for selected month
-    const monthlyRecords = employeeRecords.filter(r => {
+    // Filter records for selected month
+    const rawMonthlyRecords = employeeRecords.filter(r => {
         if (!r.date) return false;
         const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
         return d.isValid() && d.isSame(selectedMonth, 'month');
     });
+
+    // Deduplicate records by date
+    const uniqueRecordsMap = new Map();
+    rawMonthlyRecords.forEach(r => {
+        if (uniqueRecordsMap.has(r.date)) {
+            const existing = uniqueRecordsMap.get(r.date);
+            // Prioritize records with explicit Leave status or usage data
+            if (r.isLeave && !existing.isLeave) {
+                uniqueRecordsMap.set(r.date, r);
+            } else if (!existing.isLeave) {
+                 uniqueRecordsMap.set(r.date, r); // Default to overwrite
+            }
+        } else {
+            uniqueRecordsMap.set(r.date, r);
+        }
+    });
+    const monthlyRecords = Array.from(uniqueRecordsMap.values());
     
     let actualHours = 0;
     let eligibleHours = 0;
@@ -619,6 +647,7 @@ export default function AdminDashboard() {
               const [h, m] = totalHours.split(":").map(Number);
               dailyHours = h + (m/60);
           }
+          // If totalHours is 0 / null, dailyHours stays 0 (don't fallback to r.hours)
       } else if (r.hours) {
         const [h, m] = r.hours.split(":").map(Number);
         dailyHours = h + (m/60);
@@ -672,11 +701,12 @@ export default function AdminDashboard() {
           // Granted days now have dailyHours = 8, so they won't trigger this.
           // Short Days Logic
           // Granted days now have dailyHours = 8, so they won't trigger this.
-          if (!isWeekend && !r.isLeave && dailyHours < 8 && (dailyHours > 0 || (r.numberOfPunches > 0))) {
+          if (!isWeekend && !r.isLeave && dailyHours < 8) {
+              const normalizedDate = d.format("YYYY-MM-DD");
               if (dailyHours < 3) {
-                  zeroDays.push({ date: r.date, dailyHours, shortage: 8 - dailyHours });
+                  zeroDays.push({ date: normalizedDate, dailyHours, shortage: 8 - dailyHours });
               } else {
-                  shortDays.push({ date: r.date, dailyHours, shortage: 8 - dailyHours });
+                  shortDays.push({ date: normalizedDate, dailyHours, shortage: 8 - dailyHours });
               }
           }
       }
@@ -692,7 +722,7 @@ export default function AdminDashboard() {
     
     let curr = start.clone();
     let passedWorkingDays = 0;
-    let weekendCount = 0; // NEW: Count total weekends
+ // NEW: Count total weekends
 
     while (curr.isSameOrBefore(end)) {
         const dayStr = curr.format("YYYY-MM-DD");
@@ -701,9 +731,7 @@ export default function AdminDashboard() {
         const isHoliday = holidayDates.includes(dayStr);
         const isFuture = curr.isAfter(today, 'day');
         
-        if (isWeekend) {
-            weekendCount++;
-        }
+
         
         // Count Passed Working Days
         if (!isWeekend && !isHoliday && !isFuture) {
@@ -723,9 +751,14 @@ export default function AdminDashboard() {
     const passedTargetHours = passedWorkingDays * 8;
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
-    const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
+    const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType && r.leaveType.toLowerCase() === 'paid').length;
+    
+
+
+    missingDays.sort();
+
     // Fix: Subtract granted (paid) leaves from the total leaves count using dynamic count
-    const totalLeaves = (missingDays.length + leavesCount + zeroDays.length) - paidLeavesCount;
+    // Note: missingDays now includes zeroDays, so we remove zeroDays.length from the formula.
 
     // --- SALARY CALCULATION (Admin Specific) ---
     // const employeeId = employeeRecords[0]?.employeeId; (Already defined above)
@@ -755,25 +788,35 @@ export default function AdminDashboard() {
 
         const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
         const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+        const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
         let hoursForPay = dailyHours;
-        if (isWeekend && !r.weekendApproved) hoursForPay = 0;
+        // if (isWeekend && !r.weekendApproved) hoursForPay = 0;
         
-        if (hoursForPay >= 8) {
-            earnedDays += 1;
-        } else if (hoursForPay >= 3) {
-            earnedDays += 0.5;
+        // Calculate Worked Days (Discrete Logic: 0, 0.5, or 1)
+        // Rule: < 3 Hours = 0 (Leave)
+        // Rule: 3 to < 8 Hours = 0.5 (Half Day)
+        // Rule: >= 8 Hours = 1.0 (Full Day)
+        // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded 
+        // to prevent 0-hour or half-day records from penalizing the "Paid Off" benefit.
+        let earned = 0;
+        if (isWeekend || isHoliday) {
+            earned = 1;
+        } else {
+            if (hoursForPay >= 8) {
+                earned = 1;
+            } else if (hoursForPay >= 3) {
+                earned = 0.5;
+            }
         }
-        
-        if (hoursForPay >= 3) {
+        earnedDays += earned;
+
+        if (isWeekend || isHoliday || hoursForPay >= 3) {
             presentDaysCount += 1;
         }
     });
 
-    // New Formula as requested: Present Days + Saturday + Sunday - Leaves
-    // Denominator: Working Days + Weekends (Total Billable Days)
-    const billableDays = workingDays + weekendCount; 
-    const dailyRate = billableDays > 0 ? monthlySalary / billableDays : 0;
+
     
     // Incentive Calculation
     const incentiveKey = `${employeeId}_${monthStr}`;
@@ -795,28 +838,114 @@ export default function AdminDashboard() {
 
     let effectivelyEarnedDays = earnedDays;
 
-    // Fix for "High Hours but Low Days"
-    // If they met the target hours, we waive "Half Day" penalties (treat them as Full Days)
-    // presentDaysCount includes all days >= 3 hours as 1.0
+    // Fix for "High Hours but Low Days" (Restored per user request)
+    // If they met the target hours (Overtime elsewhere), we waive "Half Day" penalties.
+    // presentDaysCount includes all days >= 3 hours as 1.0.
+    // This allows 14h day to cover a 6.5h day.
+    // Note: Absences (0h) are NOT in presentDaysCount, so they remain Unpaid (guaranteed by Safety Cap).
     if (eligibleHours >= targetHours && workingDays > 0) {
         effectivelyEarnedDays = presentDaysCount;
     }
 
-    // New Formula: (Present Days + Weekends)
-    // We removed "- totalLeaves" because an absence already results in 0 earnedDays.
-    // Subtracting leaves again would be a double penalty.
-    // Fix: Validated that working a weekend should recover lost salary (e.g. from Absences).
-    // So we add 'weekendCount' (Total Weekends) + 'effectivelyEarnedDays' (includes worked Weekend).
-    // This technically double-counts the worked weekend day, but that acts as the "Recovery"/"OT" value.
-    // We then CAP the total at billableDays to ensure it doesn't exceed 100% Monthly Salary.
-    let daysForPay = effectivelyEarnedDays + weekendCount;
+    // Rule: Overtime CAP.
+    // Explanation: Overtime on Worked Days can fill Shortages on other Worked Days.
+    // BUT Overtime CANNOT fill Absences (Leaves).
+    // Therefore, earned credit cannot exceed the number of days the employee was actually present (Worked >= 3h).
+    effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount);
+
+    // --- SANDWICH LEAVE LOGIC ---
+    // Rule: If Absent on Friday AND Absent on Monday -> Weekend is Sandwich (Loss of Pay)
+    const sandwichDays = [];
+    let sandwichDeduction = 0;
     
+    // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
+    let sCurr = start.clone();
+    let unworkedWeekendCount = 0;
+
+    while (sCurr.isSameOrBefore(end)) {
+        const dayStr = sCurr.format("YYYY-MM-DD");
+        if (sCurr.day() === 0 || sCurr.day() === 6) { // Weekend
+            // Count for Pay if NOT WORKED (Prevent Double Count)
+             if (!recordedDates.includes(dayStr)) {
+                 unworkedWeekendCount++;
+             }
+
+             if (sCurr.day() === 6) { // Saturday Checker for Sandwich
+                 const saturday = sCurr;
+                 const sunday = sCurr.add(1, 'day');
+                 
+                 const fridayStr = saturday.subtract(1, 'day').format("YYYY-MM-DD");
+                 const mondayStr = saturday.add(2, 'day').format("YYYY-MM-DD");
+                 
+                 const isFriAbsent = missingDays.includes(fridayStr);
+                 const isMonAbsent = missingDays.includes(mondayStr);
+                 
+                 if (isFriAbsent && isMonAbsent) {
+                     if (saturday.month() === selectedMonth.month()) {
+                         sandwichDays.push(saturday.format("YYYY-MM-DD"));
+                         sandwichDeduction++;
+                     }
+                     if (sunday.month() === selectedMonth.month()) {
+                         sandwichDays.push(sunday.format("YYYY-MM-DD"));
+                         sandwichDeduction++;
+                     }
+                 }
+            }
+        }
+        sCurr = sCurr.add(1, 'day');
+    }
+    
+    // DISABLE SANDWICH LOGIC (User Request)
+    sandwichDeduction = 0;
+    sandwichDays.length = 0; // Clear array
+
+    // --- HOLIDAY LOGIC ---
+    // Count weekdays that are holidays for Pay (Unworked)
+    let unworkedHolidayCount = 0;
+    let hCurr = start.clone();
+    while (hCurr.isSameOrBefore(end)) {
+        const dayStr = hCurr.format("YYYY-MM-DD");
+        const day = hCurr.day();
+        const isWeekend = day === 0 || day === 6;
+        if (!isWeekend && holidayDates.includes(dayStr)) {
+             // Only count if NOT WORKED
+             if (!recordedDates.includes(dayStr)) {
+                unworkedHolidayCount++;
+             }
+        }
+        hCurr = hCurr.add(1, 'day');
+    }
+
+    // New Formula: (Present Days + Unworked Weekends + Unworked Holidays)
+    // This prevents double counting. Working a holiday/weekend simply shifts it from "Unworked" bucket to "Present Days" bucket.
+    // Result: Total Days = Days In Month (if fully attended).
+    // Absences are reflected by missing from "Present Days" and not being in "Unworked" (since they are working days).
+    let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount;
+    
+    // ADJUST FOR SANDWICH
+    daysForPay -= sandwichDeduction;
+
     // APPLY GRANTED LEAVES (User Adjustment)
     // Adding granted leaves effectively pays for those days.
     // Use dynamic paidLeavesCount for robustness
     daysForPay += paidLeavesCount;
 
-    // Safety check: Cap at Billable Days (Full Month)
+    // Calculate Billable Days (Denominator)
+    // Should be Total Days in Month (including Holidays, Weekends) so that 1 day loss is 1/31 loss.
+    const billableDays = selectedMonth.daysInMonth();
+    const dailyRate = billableDays > 0 ? monthlySalary / billableDays : 0;
+
+    const actualAbsencesCount = missingDays.length + zeroDays.length;
+    let unpaidLeavesForDeduction = (missingDays.length + zeroDays.length + leavesCount) - paidLeavesCount;
+    
+    if (eligibleHours >= targetHours && workingDays > 0) {
+        unpaidLeavesForDeduction = (actualAbsencesCount + leavesCount) - paidLeavesCount;
+    }
+
+    const maxPayableDays = billableDays - Math.max(0, unpaidLeavesForDeduction);
+    daysForPay = Math.min(daysForPay, maxPayableDays);
+    
+    // Final Safe Cap just in case
     daysForPay = Math.min(daysForPay, billableDays);
     
     // Safety check: Cannot be negative
@@ -824,7 +953,7 @@ export default function AdminDashboard() {
 
     let payableSalary = (daysForPay * dailyRate) + incentiveAmount;
     if (workingDays === 0) payableSalary = 0;
-
+    
     return {
       workingDays,
       targetHours,
@@ -834,8 +963,9 @@ export default function AdminDashboard() {
       missingDays,
       shortDays, // Export for UI
       zeroDays, // Export for UI
-      totalLeaves: (missingDays.length + leavesCount + zeroDays.length) - paidLeavesCount,
+      totalLeaves: (missingDays.length + zeroDays.length + leavesCount) - paidLeavesCount,
       pendingWeekends,
+      sandwichDays, // Export for UI
       // Salary specific
       payableSalary,
       monthlySalary,
@@ -1008,24 +1138,123 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleMarkPresent = async (dateStr, employeeInfo) => {
+  const triggerSwapFlow = (record, payroll, employeeInfo) => {
+      const dates = [...(payroll.missingDays || []), ...(payroll.zeroDays || []).map(z => z.date)];
+      setSwapTarget({
+          weekendRecordId: record.id,
+          employeeInfo,
+          absenceDates: dates
+      });
+      setSwapModalOpen(true);
+      swapForm.setFieldsValue({ targetDate: dates[0], swapType: 'full' });
+  };
+
+  const handleSwapAttendance = async (values) => {
+      const { targetDate, swapType, justApprove } = values;
+      if (!swapTarget) return;
+
+      const { weekendRecordId, employeeInfo } = swapTarget;
+      
       try {
-          await addDoc(collection(db, "punches"), {
-              employeeId: employeeInfo.employeeId || "",
-              firstName: employeeInfo.firstName || "",
-              email: employeeInfo.email || "",
-              employee: employeeInfo.employeeName || "Unknown",
-              department: employeeInfo.department || "",
-              date: dateStr,
-              numberOfPunches: 2,
-              punchTimes: ["09:00", "17:00"],
-              inTime: "09:00",
-              outTime: "17:00",
-              hours: "8:00",
-              uploadedAt: new Date().toISOString(),
-              isManualEntry: true
+          // 1. Approve the Weekend
+          await updateDoc(doc(db, "punches", weekendRecordId), {
+              weekendApproved: true
           });
-          message.success(`Marked present for ${dateStr}`);
+
+          if (!justApprove && targetDate) {
+              // 2. Add or Update the Target Date (The Absence/LowHour day)
+              const hoursStr = swapType === 'half' ? "3:00" : "8:00";
+              const punchTimes = swapType === 'half' ? ["09:00", "12:00"] : ["09:00", "17:00"];
+              
+              const q = query(collection(db, "punches"), 
+                  where("employeeId", "==", employeeInfo.employeeId),
+                  where("date", "==", targetDate)
+              );
+              const snap = await getDocs(q);
+              
+              if (!snap.empty) {
+                  await updateDoc(doc(db, "punches", snap.docs[0].id), {
+                      numberOfPunches: 2,
+                      punchTimes,
+                      inTime: punchTimes[0],
+                      outTime: punchTimes[1],
+                      hours: hoursStr,
+                      isManualEntry: true,
+                      isLeave: false
+                  });
+              } else {
+                  await addDoc(collection(db, "punches"), {
+                      employeeId: employeeInfo.employeeId || "",
+                      firstName: employeeInfo.firstName || "",
+                      email: employeeInfo.email || "",
+                      employee: employeeInfo.employeeName || "Unknown",
+                      department: employeeInfo.department || "",
+                      date: targetDate,
+                      numberOfPunches: 2,
+                      punchTimes,
+                      inTime: punchTimes[0],
+                      outTime: punchTimes[1],
+                      hours: hoursStr,
+                      uploadedAt: new Date().toISOString(),
+                      isManualEntry: true,
+                      isLeave: false
+                  });
+              }
+              message.success(`Approved weekend and swapped with ${targetDate} (${swapType === 'half' ? '3h' : '8h'})`);
+          } else {
+              message.success("Weekend work approved");
+          }
+
+          setSwapModalOpen(false);
+          setSwapTarget(null);
+          fetchData();
+      } catch (e) {
+          console.error(e);
+          message.error("Action failed: " + e.message);
+      }
+  };
+
+  const handleMarkPresent = async (dateStr, employeeInfo, type = 'full') => {
+      try {
+          const hoursStr = type === 'half' ? "3:00" : "8:00";
+          const punchTimes = type === 'half' ? ["09:00", "12:00"] : ["09:00", "17:00"];
+
+          // Check if record exists
+          const q = query(collection(db, "punches"), 
+              where("employeeId", "==", employeeInfo.employeeId),
+              where("date", "==", dateStr)
+          );
+          const snap = await getDocs(q);
+
+          if (!snap.empty) {
+              await updateDoc(doc(db, "punches", snap.docs[0].id), {
+                  numberOfPunches: 2,
+                  punchTimes,
+                  inTime: punchTimes[0],
+                  outTime: punchTimes[1],
+                  hours: hoursStr,
+                  isManualEntry: true,
+                  isLeave: false
+              });
+          } else {
+              await addDoc(collection(db, "punches"), {
+                  employeeId: employeeInfo.employeeId || "",
+                  firstName: employeeInfo.firstName || "",
+                  email: employeeInfo.email || "",
+                  employee: employeeInfo.employeeName || "Unknown",
+                  department: employeeInfo.department || "",
+                  date: dateStr,
+                  numberOfPunches: 2,
+                  punchTimes,
+                  inTime: punchTimes[0],
+                  outTime: punchTimes[1],
+                  hours: hoursStr,
+                  uploadedAt: new Date().toISOString(),
+                  isManualEntry: true,
+                  isLeave: false
+              });
+          }
+          message.success(`Marked as ${type === 'half' ? 'Half Day' : 'Full Day'} for ${dateStr}`);
           fetchData();
       } catch (e) {
           console.error(e);
@@ -1248,7 +1477,7 @@ export default function AdminDashboard() {
                         {payroll.pendingWeekends.map(pw => (
                             <div key={pw.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, background: darkMode ? "#000" : "#fff", padding: "6px 10px", borderRadius: 4, border: "1px solid #faad14" }}>
                                 <span style={{ fontSize: 12, fontWeight: 500 }}>{pw.date} — <span style={{color: '#1890ff'}}>{pw.dailyHours.toFixed(2)} hrs</span></span>
-                                <Button type="primary" size="small" onClick={() => handleApproveWeekend(pw.id)}>Accept</Button>
+                                <Button type="primary" size="small" onClick={() => triggerSwapFlow(pw, payroll, employeeInfo)}>Accept</Button>
                             </div>
                         ))}
                     </div>
@@ -1278,7 +1507,6 @@ export default function AdminDashboard() {
                                 {employeeInfo && (
                                    <div style={{ display: 'flex', gap: 8, alignItems: "center" }}>
                                        <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
-                                       <Button type="primary" size="small" ghost style={{ borderColor: '#fa8c16', color: '#fa8c16', fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantShortage(sd, employeeInfo)}>Grant (+{formatDuration(sd.shortage)})</Button>
                                    </div>
                                 )}
                             </div>
@@ -1308,12 +1536,18 @@ export default function AdminDashboard() {
                                 boxShadow: "0 2px 4px rgba(207, 19, 34, 0.1)"
                             }}>
                                 <span style={{ fontWeight: 600 }}>{sd.date} ({(sd.dailyHours || 0).toFixed(2)} hrs)</span>
-                                {employeeInfo && (
-                                   <div style={{ display: 'flex', gap: 8, alignItems: "center" }}>
-                                       <span style={{ color: "#cf1322" }}>- {formatDuration(sd.shortage)}</span>
-                                       <Button type="primary" size="small" danger ghost style={{ fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantShortage(sd, employeeInfo)}>Grant (+{formatDuration(sd.shortage)})</Button>
-                                   </div>
-                                )}
+                                    <div style={{ display: 'flex', gap: 8, alignItems: "center" }}>
+                                        <span style={{ color: "#cf1322" }}>- {formatDuration(sd.shortage)}</span>
+                                        <Dropdown menu={{
+                                            items: [
+                                                { key: 'half', label: 'Mark as Half Day' },
+                                                { key: 'full', label: 'Mark as Full Day' }
+                                            ],
+                                            onClick: ({ key }) => handleMarkPresent(sd.date, employeeInfo, key)
+                                        }}>
+                                            <Button type="primary" size="small" ghost danger icon={<PlusOutlined />}>Present</Button>
+                                        </Dropdown>
+                                    </div>
                             </div>
                         ))}
                     </div>
@@ -1342,11 +1576,19 @@ export default function AdminDashboard() {
                             }}>
                                 <span style={{ fontWeight: 600 }}>{dateStr}</span>
                                 {employeeInfo && (
-                                   <div style={{ display: 'flex', gap: 8 }}>
-                                       <Button type="default" size="small" style={{ fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, false)}>Unpaid</Button>
-                                       <Button type="primary" ghost size="small" style={{ borderColor: '#52c41a', color: '#52c41a', fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, true)}>Paid</Button>
-                                       <Button type="primary" ghost size="small" danger style={{ fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleMarkPresent(dateStr, employeeInfo)}>Present</Button>
-                                   </div>
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <Button type="default" size="small" style={{ fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, false)}>Unpaid</Button>
+                                        <Button type="primary" ghost size="small" style={{ borderColor: '#52c41a', color: '#52c41a', fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, true)}>Paid</Button>
+                                        <Dropdown menu={{
+                                            items: [
+                                                { key: 'half', label: 'Mark as Half Day' },
+                                                { key: 'full', label: 'Mark as Full Day' }
+                                            ],
+                                            onClick: ({ key }) => handleMarkPresent(dateStr, employeeInfo, key)
+                                        }}>
+                                            <Button type="primary" ghost size="small" danger style={{ fontSize: 12, padding: "0 12px", height: 26 }} icon={<PlusOutlined />}>Present</Button>
+                                        </Dropdown>
+                                    </div>
                                 )}
                             </div>
                         ))}
@@ -1359,7 +1601,6 @@ export default function AdminDashboard() {
 
 
 
-  /* ================= HELPERS & COLUMNS ================= */
   /* ================= HELPERS & COLUMNS ================= */
   const formatDuration = (hoursDecimal) => {
     if (!hoursDecimal || hoursDecimal <= 0) return "0:00:00";
@@ -1374,7 +1615,7 @@ export default function AdminDashboard() {
     return d.isValid() ? d.format("dddd, MMMM DD, YYYY") : dateStr;
   };
 
-  const generateColumns = (maxPairs) => {
+  const generateColumns = (maxPairs, payroll = {}, emp = {}) => {
       const punchCols = [];
       for (let i = 0; i < maxPairs; i++) {
           punchCols.push({
@@ -1395,7 +1636,7 @@ export default function AdminDashboard() {
 
       return [
         { title: "Employee", dataIndex: "employee", key: "employee", width: 180, fixed: "left", render: (_, r) => <div style={{fontWeight:600}}>{r.firstName || r.employee || "N/A"}</div> },
-        { title: "Date", dataIndex: "fullDate", key: "fullDate", width: 220, fixed: "left", render: (t, r) => <span>{t} {r.isGranted && <Popconfirm title="Revoke this grant?" onConfirm={() => handleRevokeShortage(r)}><Tag color="gold" style={{marginLeft:4, cursor: "pointer"}}>Granted</Tag></Popconfirm>}</span> },
+        { title: "Date", dataIndex: "fullDate", key: "fullDate", width: 220, fixed: "left", render: (t, r) => <span>{t}</span> },
         ...punchCols,
         { title: "Total Hours", dataIndex: "targetHoursFormatted", width: 100, align: "center" },
         { title: "Present Hours", dataIndex: "presentHoursFormatted", width: 120, align: "center" },
@@ -1414,7 +1655,7 @@ export default function AdminDashboard() {
             return (
                 <div style={{ display: 'flex', gap: 4 }}>
                     <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
-                    {showApproveBtn && <Button type="primary" size="small" onClick={() => handleApproveWeekend(r.id)}>Approve</Button>}
+                    {showApproveBtn && <Button type="primary" size="small" onClick={() => triggerSwapFlow(r, payroll, emp)}>Approve</Button>}
                 </div>
             );
         }},
@@ -1489,8 +1730,17 @@ export default function AdminDashboard() {
                       const targetHours = isWeekend ? 0 : 8;
                       const shortfall = targetHours - dailyHours;
                       const hoursShortBy = shortfall > 0 ? shortfall : 0;
-                      const presentDayCount = dailyHours > 0 ? 1 : 0; 
-
+                      
+                      // Present Days: Days with >= 3 hours (Half Day or Full Day)
+                      const presentDayCount = dailyHours >= 3 ? 1 : 0; 
+                      
+                      // Leave Check: Explicit Leave OR Low Hours (< 3) on a Weekday
+                      // Note: Weekends with < 3 hours are not leaves.
+                      let isLowHoursLeave = false;
+                      if (!isWeekend && dailyHours < 3 && !r.isLeave) {
+                          isLowHoursLeave = true;
+                      }
+                      
                       return {
                           ...r,
                           fullDate: getDayOfWeek(r.date),
@@ -1499,7 +1749,7 @@ export default function AdminDashboard() {
                           presentHoursFormatted: formatDuration(dailyHours),
                           hoursShortByFormatted: formatDuration(hoursShortBy),
                           presentDays: presentDayCount,
-                          leaveCheck: r.isLeave ? 1 : 0,
+                          leaveCheck: (r.isLeave || isLowHoursLeave) ? 1 : 0,
                           daySwapOff: 0,
                           weekendCheck: isWeekend ? 1 : 0,
                           paidHolidays: 0,
@@ -1509,7 +1759,7 @@ export default function AdminDashboard() {
 
                   const maxPunches = Math.max(0, ...combinedRecords.map(r => (r.sortedPunches || []).length));
                   const maxPairs = Math.max(3, Math.ceil(maxPunches / 2));
-                  const dynamicColumns = generateColumns(maxPairs);
+                  const dynamicColumns = generateColumns(maxPairs, payroll, emp);
 
                   return {
                   key: key,
@@ -1820,6 +2070,59 @@ export default function AdminDashboard() {
               </div>
             </Form>
           </Modal>
+
+        {/* Swap Attendance Modal */}
+        <Modal
+            title="Approve Weekend & Offset Absence"
+            open={swapModalOpen}
+            onOk={() => swapForm.submit()}
+            onCancel={() => setSwapModalOpen(false)}
+            okText="Confirm Action"
+            width={400}
+        >
+            <Form form={swapForm} onFinish={handleSwapAttendance} layout="vertical">
+                <div style={{ marginBottom: 16, padding: 12, background: darkMode ? "#222" : "#f5f5f5", borderRadius: 8 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                        Approving weekend work for eployee ID: {swapTarget?.employeeInfo?.employeeId}
+                    </Typography.Text>
+                </div>
+
+                <Form.Item name="justApprove" label="Action Type" initialValue={false}>
+                    <Radio.Group style={{ width: '100%' }}>
+                        <Radio.Button value={false} style={{ width: '50%', textAlign: 'center' }}>Swap with Absence</Radio.Button>
+                        <Radio.Button value={true} style={{ width: '50%', textAlign: 'center' }}>Just Approve</Radio.Button>
+                    </Radio.Group>
+                </Form.Item>
+
+                <Form.Item 
+                    noStyle 
+                    shouldUpdate={(prevValues, currentValues) => prevValues.justApprove !== currentValues.justApprove}
+                >
+                    {({ getFieldValue }) => !getFieldValue('justApprove') ? (
+                        <>
+                            <Form.Item 
+                                name="targetDate" 
+                                label="Select Absence/Low-Hour date to fix"
+                                rules={[{ required: true, message: 'Please select a date' }]}
+                            >
+                                <Select placeholder="Choose a date">
+                                    {(swapTarget?.absenceDates || []).map(d => (
+                                        <Select.Option key={d} value={d}>{d}</Select.Option>
+                                    ))}
+                                </Select>
+                            </Form.Item>
+
+                            <Form.Item name="swapType" label="Mark Swapped Day as" initialValue="full">
+                                <Radio.Group>
+                                    <Radio value="full">Full Day (8h)</Radio>
+                                    <Radio value="half">Half Day (3h)</Radio>
+                                </Radio.Group>
+                            </Form.Item>
+                        </>
+                    ) : null}
+                </Form.Item>
+            </Form>
+        </Modal>
 
         {/* HOLIDAY MODAL */}
         <Modal 

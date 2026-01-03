@@ -175,11 +175,23 @@ export default function SuperEmployeeDashboard() {
     DEFAULT_HOLIDAYS.forEach(d => { if(!holidayDates.includes(d)) holidayDates.push(d) });
     
     // Filter records for selected month
-    const monthlyRecords = employeeRecords.filter(r => {
+    const rawMonthlyRecords = employeeRecords.filter(r => {
         if (!r.date) return false;
         const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
         return d.isValid() && d.isSame(selectedMonth, 'month');
     });
+
+    const uniqueRecordsMap = new Map();
+    rawMonthlyRecords.forEach(r => {
+        if (uniqueRecordsMap.has(r.date)) {
+            const existing = uniqueRecordsMap.get(r.date);
+            if (r.isLeave && !existing.isLeave) uniqueRecordsMap.set(r.date, r);
+            else if (!existing.isLeave) uniqueRecordsMap.set(r.date, r);
+        } else {
+            uniqueRecordsMap.set(r.date, r);
+        }
+    });
+    const monthlyRecords = Array.from(uniqueRecordsMap.values());
     
     // Calculate Hours
     let actualHours = 0;
@@ -187,6 +199,7 @@ export default function SuperEmployeeDashboard() {
     let passedEligibleHours = 0;
     const recordedDates = [];
     const shortDays = []; // NEW
+    const zeroDays = []; // NEW
     let earnedDays = 0;
     let presentDaysCount = 0;
     const today = dayjs();
@@ -202,6 +215,7 @@ export default function SuperEmployeeDashboard() {
               const [h, m] = totalHours.split(":").map(Number);
               dailyHours = h + (m/60);
           }
+          // If totalHours is 0 / null, dailyHours stays 0 (don't fallback to r.hours)
       } else if (r.hours) {
         const [h, m] = r.hours.split(":").map(Number);
         dailyHours = h + (m/60);
@@ -222,52 +236,62 @@ export default function SuperEmployeeDashboard() {
       }
       if(d.isValid()) {
           recordedDates.push(d.format("YYYY-MM-DD"));
-          
-          const isWeekend = d.day() === 0 || d.day() === 6;
-
-          // Rules Check
+          const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+          const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
           // Rules Check - Removed 3h threshold to match AdminDashboard
-          // if (dailyHours >= 3) {
-             let hoursToAdd = 0;
-             if (isWeekend) {
-                 if (r.weekendApproved) {
-                     hoursToAdd = dailyHours;
-                 }
-             } else {
-                 hoursToAdd = dailyHours;
-             }
-             
-             eligibleHours += hoursToAdd;
-             
-             // Passed Hours
-             if (d.isSameOrBefore(today, 'day')) {
-                 passedEligibleHours += hoursToAdd;
-             }
-         // }
+          let hoursToAdd = 0;
+          if (isWeekend) {
+              if (r.weekendApproved) {
+                  hoursToAdd = dailyHours;
+              }
+          } else {
+              hoursToAdd = dailyHours;
+          }
+          
+          eligibleHours += hoursToAdd;
+          
+          // Passed Hours
+          if (d.isSameOrBefore(today, 'day')) {
+              passedEligibleHours += hoursToAdd;
+          }
 
-          // Short Days Logic
-          // isGranted is calculated above. dailyHours is updated to 8 if granted.
-          // So dailyHours < 8 will be false for granted days.
-          if (!isWeekend && !r.isLeave && dailyHours > 0 && dailyHours < 8) {
-              shortDays.push({ date: r.date, dailyHours, shortage: 8 - dailyHours });
+          if (!isWeekend && !r.isLeave && dailyHours < 8) {
+              const normalizedDate = d.format("YYYY-MM-DD");
+              if (dailyHours < 3) {
+                  zeroDays.push({ date: normalizedDate, dailyHours, shortage: 8 - dailyHours });
+              } else {
+                  shortDays.push({ date: normalizedDate, dailyHours, shortage: 8 - dailyHours });
+              }
           }
 
           // Salary Calculation Logic Integration (Calculated per record loop)
-          // We need to calculate earned days HERE inside the loop or re-loop.
-          // Since we are already looping, let's do it here.
-
           let hoursForPay = dailyHours;
-          // Weekend logic for PAY: Only counted if approved (same as elapsed time logic above usually)
-          // In AdminDashboard: if (isWeekend && !r.weekendApproved) hoursForPay = 0;
-          if (isWeekend && !r.weekendApproved) hoursForPay = 0;
-
-          if (hoursForPay >= 8) earnedDays += 1;
-          else if (hoursForPay >= 3) earnedDays += 0.5;
-
-          if (hoursForPay >= 3) presentDaysCount += 1;
+          
+          // Calculate Worked Days (Discrete Logic)
+          // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded
+          let earned = 0;
+          if (isWeekend || isHoliday) {
+              earned = 1;
+          } else {
+              if (hoursForPay >= 8) {
+                  earned = 1;
+              } else if (hoursForPay >= 3) {
+                  earned = 0.5;
+              }
+          }
+          earnedDays += earned;
+       
+          if (isWeekend || isHoliday || hoursForPay >= 3) {
+              presentDaysCount++;
+          }
       }
-    });
+    }); // End of monthlyRecords loop
+
+    // Rule: Overtime CAP.
+    // Earned Days cannot exceed Present Days count.
+    earnedDays = Math.min(earnedDays, presentDaysCount);
+
     // Calculate Missing Days (Absences)
     const missingDays = [];
     const start = selectedMonth.clone().startOf("month");
@@ -275,7 +299,7 @@ export default function SuperEmployeeDashboard() {
     
     let curr = start.clone();
     let passedWorkingDays = 0;
-    let weekendCount = 0; // NEW
+ // NEW
 
     while (curr.isSameOrBefore(end)) {
         const dayStr = curr.format("YYYY-MM-DD");
@@ -284,7 +308,7 @@ export default function SuperEmployeeDashboard() {
         const isHoliday = holidayDates.includes(dayStr);
         const isFuture = curr.isAfter(today, 'day');
         
-        if (isWeekend) weekendCount++;
+
         
         // Count Passed Working Days
         if (!isWeekend && !isHoliday && !isFuture) {
@@ -299,6 +323,8 @@ export default function SuperEmployeeDashboard() {
         curr = curr.add(1, "day");
     }
 
+    missingDays.sort();
+
     // Calculate Target
     const workingDays = calculateWorkingDays(selectedMonth);
     const targetHours = workingDays * 8;
@@ -306,37 +332,96 @@ export default function SuperEmployeeDashboard() {
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
     const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
-    const totalLeaves = missingDays.length + leavesCount;
+    const totalLeaves = missingDays.length + zeroDays.length + leavesCount;
 
-    // --- SALARY / NET EARNING DAYS CALCULATION ---
-    // Fix: Use earnedDays (calculated in loop) to account for Half Days / Short Days
-    // Logic: Earned Days (from Work) + Paid Leaves + Weekends (Paid)
+    // --- SANDWICH LEAVE LOGIC ---
+    const sandwichDays = [];
+    let sandwichDeduction = 0;
     
-    // Fix for "High Hours but Low Days" (similar to AdminDashboard)
+    // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
+    let sCurr = start.clone();
+    let unworkedWeekendCount = 0;
+
+    while (sCurr.isSameOrBefore(end)) {
+        const dayStr = sCurr.format("YYYY-MM-DD");
+        if (sCurr.day() === 6 || sCurr.day() === 0) { // Weekend
+             // Count for Pay if NOT WORKED (Prevent Double Count)
+             if (!recordedDates.includes(dayStr)) {
+                 unworkedWeekendCount++;
+             }
+
+            if (sCurr.day() === 6) { // Saturday
+                 const saturday = sCurr;
+                 const sunday = sCurr.add(1, 'day');
+                 
+                 const fridayStr = saturday.subtract(1, 'day').format("YYYY-MM-DD");
+                 const mondayStr = saturday.add(2, 'day').format("YYYY-MM-DD");
+                 
+                 const isFriAbsent = missingDays.includes(fridayStr);
+                 const isMonAbsent = missingDays.includes(mondayStr);
+                 
+                 if (isFriAbsent && isMonAbsent) {
+                     if (saturday.month() === selectedMonth.month()) {
+                         sandwichDays.push(saturday.format("YYYY-MM-DD"));
+                         sandwichDeduction++;
+                     }
+                     if (sunday.month() === selectedMonth.month()) {
+                         sandwichDays.push(sunday.format("YYYY-MM-DD"));
+                         sandwichDeduction++;
+                     }
+                 }
+            }
+        }
+        sCurr = sCurr.add(1, 'day');
+    }
+    
+    // DISABLE SANDWICH LOGIC
+    sandwichDeduction = 0;
+    sandwichDays.length = 0;
+
+    // --- HOLIDAY LOGIC ---
+    let unworkedHolidayCount = 0;
+    let hCurr = start.clone();
+    while (hCurr.isSameOrBefore(end)) {
+        const dayStr = hCurr.format("YYYY-MM-DD");
+        const day = hCurr.day();
+        const isWeekend = day === 0 || day === 6;
+        if (!isWeekend && holidayDates.includes(dayStr)) {
+             // Only count if NOT WORKED
+             if (!recordedDates.includes(dayStr)) {
+                unworkedHolidayCount++;
+             }
+        }
+        hCurr = hCurr.add(1, 'day');
+    }
+
+    // Fix for "High Hours but Low Days" (Restored)
     let effectivelyEarnedDays = earnedDays;
     if (eligibleHours >= targetHours && workingDays > 0) {
         effectivelyEarnedDays = presentDaysCount;
     }
 
-    let netEarningDays = effectivelyEarnedDays + weekendCount + paidLeavesCount;
+    // Logic: Earned Days + Unworked Weekend + Unworked Holidays (minus sandwich) + Paid Leaves
+    // This prevents double counting.
+    let netEarningDays = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount - sandwichDeduction;
+    
+    // --- FINAL SALARY CAPPING ---
+    // Rule: We deduct Unpaid Leaves from the max possible days.
+    const actualAbsencesCount = (missingDays.length || 0) + (zeroDays.length || 0);
+    let unpaidLeavesCount = (missingDays.length || 0) + (zeroDays.length || 0) + ((leavesCount || 0) - (paidLeavesCount || 0));
+
+    if (eligibleHours >= targetHours && workingDays > 0) {
+        unpaidLeavesCount = (actualAbsencesCount || 0) + ((leavesCount || 0) - (paidLeavesCount || 0));
+    }
+    
+    // Max Payable = Total Days - Unpaid Leaves
+    const maxPayableDays = selectedMonth.daysInMonth() - unpaidLeavesCount;
+    netEarningDays = Math.min(netEarningDays, maxPayableDays);
     
     // Cap at days in month (or billable days)
-    const daysInMonth = dayjs().isSame(selectedMonth, 'month') ? dayjs().date() : selectedMonth.daysInMonth();
     netEarningDays = Math.min(netEarningDays, selectedMonth.daysInMonth()); // Logical Cap
-    
-    // If we are in the current month, we probably shouldn't cap at "daysInMonth" (30/31) if we haven't reached there,
-    // BUT "earnedDays" only accumulates for passed days anyway. 
-    // However, "weekendCount" counts ALL weekends in the month loop?
-    // Let's check the weekendCount loop.
-    // In the loop above: `while (curr.isSameOrBefore(end))` -> loops entire month. 
-    // So weekendCount includes future weekends.
-    // If looking at "Net Earning Days" for salary *projection*, full weekends is correct.
-    // If looking at "Passed Earning Days", we'd need passed weekends.
-    // "Net Earning Days" usually implies the projected total for the month if no more cuts happen? 
-    // OR "What I have earned SO FAR".
-    // User complaint "hours are less but net earning days are 28" implies they expect it to be lower.
-    // If usage is "Month End" salary calc, then including all weekends is correct.
-    
+    if (netEarningDays < 0) netEarningDays = 0;
+
     return {
       workingDays,
       targetHours,
@@ -346,6 +431,7 @@ export default function SuperEmployeeDashboard() {
       missingDays,
       shortDays, 
       totalLeaves,
+      sandwichDays, // Export
       passedWorkingDays,
       passedTargetHours,
       passedEligibleHours,
@@ -700,8 +786,15 @@ export default function SuperEmployeeDashboard() {
         const shortfall = targetHours - dailyHours;
         const hoursShortBy = shortfall > 0 ? shortfall : 0;
         
-        const presentDayCount = dailyHours > 0 ? 1 : 0; 
+        // Present Days: Days with >= 3 hours (Half Day or Full Day)
+        const presentDayCount = dailyHours >= 3 ? 1 : 0; 
         const weekendCheck = isWeekend ? 1 : 0;
+
+        // Leave Check: Explicit Leave OR Low Hours (< 3) on a Weekday
+        let isLowHoursLeave = false;
+        if (!isWeekend && dailyHours < 3 && !r.isLeave) {
+            isLowHoursLeave = true;
+        }
 
         return {
            ...r,
@@ -711,7 +804,7 @@ export default function SuperEmployeeDashboard() {
            presentHoursFormatted: formatDuration(dailyHours),
            hoursShortByFormatted: formatDuration(hoursShortBy),
            presentDays: presentDayCount,
-           leaveCheck: r.isLeave ? 1 : 0,
+           leaveCheck: (r.isLeave || isLowHoursLeave) ? 1 : 0,
            daySwapOff: 0, 
            weekendCheck,
            paidHolidays: 0,
@@ -741,7 +834,7 @@ export default function SuperEmployeeDashboard() {
             presentHoursFormatted: "0:00:00",
             hoursShortByFormatted: isWeekend ? "0:00:00" : "8:00:00",
             presentDays: 0, // Absent
-            leaveCheck: 0,
+            leaveCheck: isWeekend ? 0 : 1, // Using 1 for Absent on Weekdays as requested ("show as Leave")
             daySwapOff: 0,
             weekendCheck: isWeekend ? 1 : 0,
             paidHolidays: 0,
