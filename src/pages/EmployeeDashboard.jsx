@@ -503,98 +503,147 @@ export default function EmployeeDashboard() {
 
 
   /* ================= RENDER HELPERS ================= */
-  const renderPayrollStats = (payroll) => (
+  const renderPayrollStats = (payroll, darkMode) => (
       <div style={{ 
           marginBottom: 16, 
-          padding: 20, 
+          padding: "12px 16px", 
           background: darkMode ? "#1f1f1f" : "#fff", 
           borderRadius: 8,
           boxShadow: darkMode ? "0 2px 8px rgba(0,0,0,0.5)" : "0 2px 8px rgba(0,0,0,0.05)",
           border: darkMode ? "1px solid #303030" : "1px solid #f0f0f0"
       }}>
-          <Row gutter={[16, 16]}>
-              <Col xs={12} sm={3}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 500 }} /></Col>
-              
-              {/* NEW: Net Earning Days */}
-              <Col xs={12} sm={4}>
+          {/* COMPACT STATS ROW */}
+          <Row gutter={[16, 16]} align="middle">
+              <Col xs={12} sm={3}>
+                  <Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 600 }} />
+              </Col>
+              <Col xs={12} sm={3}>
                   <Statistic 
-                    title="Net Earning Days" 
+                    title="Net Earned" 
                     value={`${payroll.netEarningDays} / ${payroll.daysInMonth}`} 
-                    valueStyle={{ fontSize: 16, fontWeight: "bold", color: "#52c41a" }} 
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
                   />
               </Col>
-
-              <Col xs={12} sm={4}><Statistic title="Passed Days" value={payroll.passedWorkingDays} suffix={`/ ${payroll.workingDays}`} valueStyle={{ fontSize: 16, fontWeight: 500, color: "#722ed1" }} /></Col>
-              
-              <Col xs={12} sm={4}>
+              <Col xs={12} sm={3}>
                   <Statistic 
-                    title="Passed Hours" 
-                    value={payroll.passedEligibleHours.toFixed(2)} 
-                    suffix={`/ ${payroll.passedTargetHours}h`}
-                    valueStyle={{ fontSize: 16, fontWeight: 500, color: "#1890ff" }} 
-                    prefix={<ClockCircleOutlined />} 
+                    title="Passed Days" 
+                    value={payroll.passedWorkingDays} 
+                    suffix={`/ ${payroll.workingDays}`}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#722ed1" }} 
                   />
               </Col>
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Monthly Hours" 
-                    value={payroll.passedEligibleHours.toFixed(2)} 
-                    suffix={`/ ${payroll.targetHours}h`}
-                    valueStyle={{ fontSize: 16, fontWeight: 500, color: "#722ed1" }} 
-                  />
-              </Col>
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Time Check" 
-                    value={Math.abs(payroll.passedDifference).toFixed(2) + "h"} 
-                    prefix={payroll.passedDifference >= 0 ? <PlusOutlined /> : <></>} 
-                    suffix={payroll.passedDifference >= 0 ? "Ahead" : "Behind"}
-                    valueStyle={{ fontSize: 16, color: payroll.passedDifference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: "bold" }} 
-                  />
-              </Col>
-
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Difference (Total)" 
-                    value={payroll.difference.toFixed(2)} 
-                    valueStyle={{ fontSize: 20, color: payroll.difference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: "bold" }} 
-                    prefix={payroll.difference > 0 ? <PlusOutlined /> : <></>} 
-                  />
-              </Col>
-              <Col xs={12} sm={4}>
-                  <Statistic 
+              <Col xs={12} sm={3}>
+                   <Statistic 
                     title="Leaves" 
-                    value={payroll.totalLeaves || 0} 
-                    valueStyle={{ fontSize: 20, color: "#faad14", fontWeight: "bold" }} 
+                    value={Math.max(0, payroll.totalLeaves)} 
+                    valueStyle={{ fontSize: 16, color: (payroll.paidLeavesCount > 0) ? "#52c41a" : "#faad14", fontWeight: 600 }} 
+                    suffix={payroll.paidLeavesCount > 0 ? <span style={{fontSize:11, color:'#888', marginLeft:5}}>(-{payroll.paidLeavesCount} Pd)</span> : null}
                   />
               </Col>
-              {payroll.shortDays && payroll.shortDays.length > 0 && payroll.passedDifference < 0 && (
-                <Col span={24} style={{ marginTop: 12, background: darkMode ? "rgba(250, 140, 22, 0.1)" : "#fff7e6", padding: 12, borderRadius: 6, border: "1px dashed #fa8c16" }}>
-                    <div style={{ fontSize: 13, fontWeight: "bold", color: "#fa8c16", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                        <ClockCircleOutlined /> Short Days (Less than 8h) ({payroll.shortDays.length})
-                    </div>
-                    <div style={{ maxHeight: 150, overflowY: "auto", display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                        {payroll.shortDays.map(sd => (
-                            <Tag key={sd.date} color="warning" style={{ fontSize: 14, padding: "4px 10px" }}>
-                                {sd.date} ({(sd.dailyHours || 0).toFixed(2)}h) - {formatDuration(sd.shortage)}
-                            </Tag>
-                        ))}
-                    </div>
-                </Col>
-              )}
-              {payroll.missingDays && payroll.missingDays.length > 0 && (
-                <Col span={24} style={{ marginTop: 12, background: darkMode ? "rgba(255, 77, 79, 0.1)" : "#fff1f0", padding: 12, borderRadius: 6, border: "1px dashed #ff4d4f" }}>
-                    <div style={{ fontSize: 13, fontWeight: "bold", color: "#ff4d4f", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                        <ClockCircleOutlined /> Absences / Missing Workdays ({payroll.missingDays.length})
-                    </div>
-                    <div style={{ maxHeight: 150, overflowY: "auto", display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                        {payroll.missingDays.map(dateStr => (
-                            <Tag key={dateStr} color="error" style={{ fontSize: 14, padding: "4px 10px" }}>{dateStr}</Tag>
-                        ))}
-                    </div>
-                </Col>
-              )}
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Present Hours" 
+                    value={payroll.passedEligibleHours.toFixed(2)} 
+                    suffix={<span style={{fontSize: 12, color: '#888'}}>/ {payroll.targetHours}h</span>}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#1890ff" }} 
+                  />
+              </Col>
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Hours Short by" 
+                    value={Math.abs(payroll.passedDifference).toFixed(2)} 
+                    prefix={payroll.passedDifference >= 0 ? <PlusOutlined style={{fontSize: 14}}/> : <></>} 
+                    suffix={<span style={{fontSize: 12, color: '#888'}}>h {payroll.passedDifference >= 0 ? "Ahead" : "Behind"}</span>}
+                    valueStyle={{ fontSize: 16, color: payroll.passedDifference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: 600 }} 
+                  />
+              </Col>
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Est. Salary" 
+                    value={payroll.payableSalary} 
+                    precision={0}
+                    prefix={<DollarOutlined />}
+                    valueStyle={{ fontSize: 16, color: "#52c41a", fontWeight: 600 }} 
+                    suffix={payroll.incentiveAmount > 0 ? <Tag color="gold" style={{marginLeft: 5, fontSize: 10}}>+Inc</Tag> : null}
+                  />
+              </Col>
           </Row>
+
+          {/* COLLAPSIBLE DETAILS SECTION */}
+          {((payroll.shortDays && payroll.shortDays.length > 0) || 
+            (payroll.zeroDays && payroll.zeroDays.length > 0) || 
+            (payroll.missingDays && payroll.missingDays.length > 0) ||
+            (payroll.pendingWeekends && payroll.pendingWeekends.length > 0)) && (
+              
+              <Row gutter={[16, 16]} style={{marginTop: 12}}>
+                  
+                  {/* Pending Requests Status - Employee View */}
+                  {payroll.pendingWeekends && payroll.pendingWeekends.length > 0 && (
+                    <Col span={24}>
+                        <div style={{ fontSize: 12, fontWeight: "bold", color: "#faad14", marginBottom: 6 }}>
+                            <ClockCircleOutlined /> Weekend Approvals Pending ({payroll.pendingWeekends.length})
+                        </div>
+                        {payroll.pendingWeekends.map(pw => (
+                            <div key={pw.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, background: darkMode ? "#222" : "#fffbe6", padding: "4px 8px", borderRadius: 4, border: "1px solid #faad14" }}>
+                                <span style={{ fontSize: 12 }}>{pw.date} — {pw.dailyHours.toFixed(2)}h</span>
+                                <Tag color="orange" style={{fontSize: 10}}>Waiting Admin</Tag>
+                            </div>
+                        ))}
+                    </Col>
+                  )}
+
+                  {/* Short Days */}
+                  {payroll.shortDays && payroll.shortDays.length > 0 && (
+                    <Col xs={24} md={12} lg={8}>
+                        <div style={{ marginBottom: 6, color: "#fa8c16", fontWeight: 600, fontSize: 13 }}>
+                            Short Days ({payroll.shortDays.length})
+                        </div>
+                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                            {payroll.shortDays.map(sd => (
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
+                                    <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </Col>
+                  )}
+
+                  {/* Low Hours */}
+                  {payroll.zeroDays && payroll.zeroDays.length > 0 && (
+                    <Col xs={24} md={12} lg={8}>
+                        <div style={{ marginBottom: 6, color: "#cf1322", fontWeight: 600, fontSize: 13 }}>
+                            Low Hours ({payroll.zeroDays.length})
+                        </div>
+                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                            {payroll.zeroDays.map(sd => (
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
+                                    <Button type="primary" size="small" onClick={() => openRequestModal(sd.date, 'Missing Entry Correction')} style={{height: 22, fontSize: 11}}>Request</Button>
+                                </div>
+                            ))}
+                        </div>
+                    </Col>
+                  )}
+
+                  {/* Missing Days */}
+                  {payroll.missingDays && payroll.missingDays.length > 0 && (
+                    <Col xs={24} md={12} lg={8}>
+                        <div style={{ marginBottom: 6, color: "#ff4d4f", fontWeight: 600, fontSize: 13 }}>
+                            Absences ({payroll.missingDays.length})
+                        </div>
+                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                            {payroll.missingDays.map(dateStr => (
+                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>{dateStr}</span>
+                                    <Button type="primary" ghost danger size="small" onClick={() => openRequestModal(dateStr, 'Leave Request')} style={{height: 22, fontSize: 11}}>Request Leave</Button>
+                                </div>
+                            ))}
+                        </div>
+                    </Col>
+                  )}
+              </Row>
+          )}
       </div>
   );
 
@@ -666,6 +715,7 @@ export default function EmployeeDashboard() {
   };
 
   /* ================= REQUEST ================= */
+  // Renamed or Aliased for compatibility with UI call
   const openRequest = (record) => {
     setCurrentRecord(record);
     form.setFieldsValue({
@@ -674,8 +724,51 @@ export default function EmployeeDashboard() {
     });
     setEditOpen(true);
   };
+  
+  // NOTE: 'openRequestModal' logic was used in new UI refactor but wasn't defined.
+  // We need to define it or map it to openRequest.
+  // The UI uses: openRequestModal(dateStr, 'Leave Request') or (dateStr, 'Missing Entry Correction')
+  // We should create a helper for that.
+  
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestDate, setRequestDate] = useState(null);
+  const [requestType, setRequestType] = useState("");
+  const [requestReason, setRequestReason] = useState("");
+
+  const openRequestModal = (date, type) => {
+      setRequestDate(date);
+      setRequestType(type);
+      setRequestReason("");
+      setRequestModalOpen(true);
+  };
+
+  const submitDirectRequest = async () => {
+       if (!requestReason) {
+           message.error("Please provide a reason");
+           return;
+       }
+       try {
+           await addDoc(collection(db, "requests"), {
+              email: userEmail,
+              date: requestDate,
+              type: requestType, // 'Leave Request' or 'Missing Entry Correction'
+              reason: requestReason,
+              status: "pending",
+              createdAt: new Date().toISOString(),
+              employeeId: employeeId,
+              employeeName: currentUserName
+           });
+           message.success("Request sent");
+           setRequestModalOpen(false);
+       } catch (e) {
+           console.error(e);
+           message.error("Failed to send request");
+       }
+  };
+
 
   const handleRequestUpdate = async (values) => {
+    // Legacy Punch Update Request
     const punchTimes = values.punchTimes.split(",").map((t) => t.trim()).filter(Boolean);
     const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
 
@@ -704,7 +797,6 @@ export default function EmployeeDashboard() {
     setEditOpen(false);
   };
 
-  /* ================= COMPUTED DATA ================= */
   const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays]);
   
   
@@ -1051,6 +1143,23 @@ export default function EmployeeDashboard() {
         currentUserName={currentUserName}
         selectedMonth={selectedMonth}
       />
+      <Modal
+        title={requestType}
+        open={requestModalOpen}
+        onCancel={() => setRequestModalOpen(false)}
+        onOk={submitDirectRequest}
+        okText="Send Request"
+      >
+          <div style={{marginBottom: 16}}>
+              <p>Requesting: <strong>{requestType}</strong> for <strong>{requestDate}</strong></p>
+              <Input.TextArea 
+                rows={4} 
+                placeholder="Reason (e.g. Forgot to punch, Sick leave, etc.)"
+                value={requestReason}
+                onChange={e => setRequestReason(e.target.value)}
+              />
+          </div>
+      </Modal>
     </ConfigProvider>
   );
 }

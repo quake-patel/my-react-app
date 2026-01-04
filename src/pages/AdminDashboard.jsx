@@ -1421,212 +1421,161 @@ export default function AdminDashboard() {
   const renderPayrollStats = (payroll, darkMode, employeeInfo = null) => (
       <div style={{ 
           marginBottom: 16, 
-          padding: 20, 
+          padding: "12px 16px", 
           background: darkMode ? "#1f1f1f" : "#fff", 
           borderRadius: 8,
           boxShadow: darkMode ? "0 2px 8px rgba(0,0,0,0.5)" : "0 2px 8px rgba(0,0,0,0.05)",
           border: darkMode ? "1px solid #303030" : "1px solid #f0f0f0"
       }}>
-          <Row gutter={[24, 24]}>
-              <Col xs={12} sm={4}><Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 18, fontWeight: 600 }} /></Col>
-              
-              <Col xs={12} sm={4}>
+          {/* COMPACT STATS ROW */}
+          <Row gutter={[16, 16]} align="middle">
+              <Col xs={12} sm={3}>
+                  <Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 600 }} />
+              </Col>
+              <Col xs={12} sm={3}>
                   <Statistic 
-                    title="Net Earning Days" 
+                    title="Net Earned" 
                     value={`${payroll.netEarningDays} / ${payroll.daysInMonth}`} 
-                    valueStyle={{ fontSize: 18, fontWeight: 600, color: "#52c41a" }} 
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
                   />
               </Col>
-              
-              <Col xs={12} sm={4}><Statistic title="Passed Days" value={payroll.passedWorkingDays} suffix={`/ ${payroll.workingDays}`} valueStyle={{ fontSize: 18, fontWeight: 600, color: "#722ed1" }} /></Col>
-              
-              <Col xs={12} sm={4}>
+              <Col xs={12} sm={3}>
                   <Statistic 
-                    title="Passed Hours" 
-                    value={payroll.passedEligibleHours.toFixed(2)} 
-                    suffix={`/ ${payroll.passedTargetHours}h`}
-                    valueStyle={{ fontSize: 18, fontWeight: 600, color: "#d48806" }} 
+                    title="Passed Days" 
+                    value={payroll.passedWorkingDays} 
+                    suffix={`/ ${payroll.workingDays}`}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#722ed1" }} 
                   />
               </Col>
-              
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Monthly Hours" 
-                    value={payroll.passedEligibleHours.toFixed(2)} 
-                    suffix={`/ ${payroll.targetHours}h`}
-                    valueStyle={{ fontSize: 18, fontWeight: 600, color: "#1890ff" }} 
-                    prefix={<ClockCircleOutlined />} 
-                  />
-              </Col>
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Time Check" 
-                    value={Math.abs(payroll.passedDifference).toFixed(2) + "h"} 
-                    prefix={payroll.passedDifference >= 0 ? <PlusOutlined /> : <></>} 
-                    suffix={payroll.passedDifference >= 0 ? "Ahead" : "Behind"}
-                    valueStyle={{ fontSize: 18, color: payroll.passedDifference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: 600 }} 
-                  />
-              </Col>
-              
-              {showSalary && (
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Estimated Salary" 
-                    value={payroll.payableSalary} 
-                    precision={2}
-                    valueStyle={{ fontSize: 20, color: "#52c41a", fontWeight: 600 }} 
-                    prefix={<DollarOutlined />}
-                    suffix={
-                        <div style={{display:'flex', flexDirection:'column', alignItems:'flex-start', lineHeight: 1.2}}>
-                            <span style={{fontSize: 14, color: '#888', marginLeft: 4}}>/ {payroll.monthlySalary.toLocaleString()}</span>
-                            {payroll.incentiveAmount > 0 && <Tag color="gold" style={{marginLeft: 4, marginTop: 2}}>+ ₹{payroll.incentiveAmount.toLocaleString()} Inc.</Tag>}
-                        </div>
-                    }
-                  />
-              </Col>
-              )}
-              <Col xs={12} sm={4}>
-                  <Statistic 
+              <Col xs={12} sm={3}>
+                   <Statistic 
                     title="Leaves" 
                     value={Math.max(0, payroll.totalLeaves)} 
-                    valueStyle={{ fontSize: 20, color: (payroll.paidLeavesCount > 0) ? "#52c41a" : "#faad14", fontWeight: 600 }} 
-                    suffix={payroll.paidLeavesCount > 0 ? <span style={{fontSize:12, color:'#888', marginLeft:5}}>(-{payroll.paidLeavesCount} Pd)</span> : null}
+                    valueStyle={{ fontSize: 16, color: (payroll.paidLeavesCount > 0) ? "#52c41a" : "#faad14", fontWeight: 600 }} 
+                    suffix={payroll.paidLeavesCount > 0 ? <span style={{fontSize:11, color:'#888', marginLeft:5}}>(-{payroll.paidLeavesCount} Pd)</span> : null}
                   />
               </Col>
-              
-              {/* Pending Weekend Approvals List */}
-              {payroll.pendingWeekends && payroll.pendingWeekends.length > 0 && (
-                <Col span={24} style={{ marginTop: 12, background: darkMode ? "rgba(250, 173, 20, 0.1)" : "#fffbe6", padding: 12, borderRadius: 6, border: "1px dashed #faad14" }}>
-                    <div style={{ fontSize: 13, fontWeight: "bold", color: "#faad14", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                        <ClockCircleOutlined /> Pending Weekend Approvals ({payroll.pendingWeekends.length})
-                    </div>
-                    <div style={{ maxHeight: 150, overflowY: "auto" }}>
-                        {payroll.pendingWeekends.map(pw => (
-                            <div key={pw.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, background: darkMode ? "#000" : "#fff", padding: "6px 10px", borderRadius: 4, border: "1px solid #faad14" }}>
-                                <span style={{ fontSize: 12, fontWeight: 500 }}>{pw.date} — <span style={{color: '#1890ff'}}>{pw.dailyHours.toFixed(2)} hrs</span></span>
-                                <Button type="primary" size="small" onClick={() => triggerSwapFlow(pw, payroll, employeeInfo)}>Accept</Button>
-                            </div>
-                        ))}
-                    </div>
-                </Col>
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Present Hours" 
+                    value={payroll.passedEligibleHours.toFixed(2)} 
+                    suffix={<span style={{fontSize: 12, color: '#888'}}>/ {payroll.targetHours}h</span>}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#1890ff" }} 
+                  />
+              </Col>
+              <Col xs={12} sm={4}>
+                  <Statistic 
+                    title="Hours Short by" 
+                    value={Math.abs(payroll.passedDifference).toFixed(2)} 
+                    prefix={payroll.passedDifference >= 0 ? <PlusOutlined style={{fontSize: 14}}/> : <></>} 
+                    valueStyle={{ fontSize: 16, color: payroll.passedDifference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: 600 }}
+                    suffix={<span style={{fontSize: 12, color: '#888'}}>h {payroll.passedDifference >= 0 ? "Ahead" : "Behind"}</span>}
+                  />
+              </Col>
+              {showSalary && (
+                  <Col xs={12} sm={4}>
+                      <Statistic 
+                        title="Est. Salary" 
+                        value={payroll.payableSalary} 
+                        precision={0}
+                        prefix={<DollarOutlined />}
+                        valueStyle={{ fontSize: 16, color: "#52c41a", fontWeight: 600 }} 
+                        suffix={payroll.incentiveAmount > 0 ? <Tag color="gold" style={{marginLeft: 5, fontSize: 10}}>+Inc</Tag> : null}
+                      />
+                  </Col>
               )}
-
-              {payroll.shortDays && payroll.shortDays.length > 0 && payroll.passedDifference < 0 && (
-                <Col xs={24} md={12} xl={8} style={{ marginTop: 24 }}>
-                    <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, color: "#fa8c16", fontWeight: 600, fontSize: 15 }}>
-                        <ClockCircleOutlined /> Short Days ({payroll.shortDays.length})
-                    </div>
-                    <div style={{ maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
-                        {payroll.shortDays.map(sd => (
-                            <div key={sd.date} style={{ 
-                                marginBottom: 10, 
-                                background: darkMode ? "#000" : "#fff", 
-                                padding: "10px 14px", 
-                                borderRadius: 8, 
-                                border: "1px solid #fa8c16", // Orange Border
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                fontSize: 13,
-                                boxShadow: "0 2px 4px rgba(250, 140, 22, 0.1)"
-                            }}>
-                                <span style={{ fontWeight: 600 }}>{sd.date} ({(sd.dailyHours || 0).toFixed(2)} hrs)</span>
-                                {employeeInfo && (
-                                   <div style={{ display: 'flex', gap: 8, alignItems: "center" }}>
-                                       <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
-                                   </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </Col>
-              )}
-
-              {/* Zero Days / Low Hours List (< 3h) - ALWAYS VISIBLE */}
-              {payroll.zeroDays && payroll.zeroDays.length > 0 && (
-                <Col xs={24} md={12} xl={8} style={{ marginTop: 24 }}>
-                    <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, color: "#cf1322", fontWeight: 600, fontSize: 15 }}>
-                        <ClockCircleOutlined /> Low Hours ({payroll.zeroDays.length})
-                    </div>
-                    <div style={{ maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
-                        {(payroll.zeroDays || []).map(sd => (
-                            <div key={sd.date} style={{ 
-                                marginBottom: 10, 
-                                background: darkMode ? "#000" : "#fff", 
-                                padding: "10px 14px", 
-                                borderRadius: 8, 
-                                border: "1px solid #cf1322", // Red Border
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                fontSize: 13,
-                                boxShadow: "0 2px 4px rgba(207, 19, 34, 0.1)"
-                            }}>
-                                <span style={{ fontWeight: 600 }}>{sd.date} ({(sd.dailyHours || 0).toFixed(2)} hrs)</span>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: "center" }}>
-                                        <span style={{ color: "#cf1322" }}>- {formatDuration(sd.shortage)}</span>
-                                        <Dropdown menu={{
-                                            items: [
-                                                { key: 'half', label: 'Mark as Half Day' },
-                                                { key: 'full', label: 'Mark as Full Day' }
-                                            ],
-                                            onClick: ({ key }) => handleMarkPresent(sd.date, employeeInfo, key)
-                                        }}>
-                                            <Button type="primary" size="small" ghost danger icon={<PlusOutlined />}>Present</Button>
-                                        </Dropdown>
-                                    </div>
-                            </div>
-                        ))}
-                    </div>
-                </Col>
-              )}
-
-              {/* Missing Days / Leaves List */}
-              {payroll.missingDays && payroll.missingDays.length > 0 && (
-                <Col xs={24} md={12} xl={8} style={{ marginTop: 24 }}>
-                    <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, color: "#ff4d4f", fontWeight: 600, fontSize: 15 }}>
-                        <ClockCircleOutlined /> Absences / Missing Workdays ({payroll.missingDays.length})
-                    </div>
-                    <div style={{ maxHeight: 300, overflowY: "auto", paddingRight: 4 }}>
-                        {payroll.missingDays.map(dateStr => (
-                            <div key={dateStr} style={{ 
-                                marginBottom: 10, 
-                                background: darkMode ? "#000" : "#fff", 
-                                padding: "10px 14px", 
-                                borderRadius: 8, 
-                                border: "1px solid #ff4d4f", // Red Border
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                fontSize: 13,
-                                boxShadow: "0 2px 4px rgba(255, 77, 79, 0.1)"
-                            }}>
-                                <span style={{ fontWeight: 600 }}>{dateStr}</span>
-                                {employeeInfo && (
-                                    <div style={{ display: 'flex', gap: 8 }}>
-                                        <Button type="default" size="small" style={{ fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, false)}>Unpaid</Button>
-                                        <Button type="primary" ghost size="small" style={{ borderColor: '#52c41a', color: '#52c41a', fontSize: 12, padding: "0 12px", height: 26 }} onClick={() => handleGrantLeave(dateStr, employeeInfo, true)}>Paid</Button>
-                                        <Dropdown menu={{
-                                            items: [
-                                                { key: 'half', label: 'Mark as Half Day' },
-                                                { key: 'full', label: 'Mark as Full Day' }
-                                            ],
-                                            onClick: ({ key }) => handleMarkPresent(dateStr, employeeInfo, key)
-                                        }}>
-                                            <Button type="primary" ghost size="small" danger style={{ fontSize: 12, padding: "0 12px", height: 26 }} icon={<PlusOutlined />}>Present</Button>
-                                        </Dropdown>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </Col>
-                  )}
           </Row>
+
+          {/* COLLAPSIBLE DETAILS SECTION */}
+          {((payroll.pendingWeekends && payroll.pendingWeekends.length > 0) || 
+            (payroll.shortDays && payroll.shortDays.length > 0) || 
+            (payroll.zeroDays && payroll.zeroDays.length > 0) || 
+            (payroll.missingDays && payroll.missingDays.length > 0)) && (
+              
+              <Row gutter={[16, 16]} style={{marginTop: 12}}>
+                  
+                  {/* Pending Weekend Approvals */}
+                  {payroll.pendingWeekends && payroll.pendingWeekends.length > 0 && (
+                    <Col span={24}>
+                        <div style={{ fontSize: 12, fontWeight: "bold", color: "#faad14", marginBottom: 6 }}>
+                            <ClockCircleOutlined /> Pending Weekend Approvals ({payroll.pendingWeekends.length})
+                        </div>
+                        {payroll.pendingWeekends.map(pw => (
+                            <div key={pw.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, background: darkMode ? "#222" : "#fffbe6", padding: "4px 8px", borderRadius: 4, border: "1px solid #faad14" }}>
+                                <span style={{ fontSize: 12 }}>{pw.date} — {pw.dailyHours.toFixed(2)}h</span>
+                                <Button type="primary" size="small" onClick={() => triggerSwapFlow(pw, payroll, employeeInfo)} style={{height: 22, fontSize: 11}}>Accept</Button>
+                            </div>
+                        ))}
+                    </Col>
+                  )}
+
+                  {/* Short Days */}
+                  {payroll.shortDays && payroll.shortDays.length > 0 && (
+                    <Col xs={24} md={12} lg={8}>
+                        <div style={{ marginBottom: 6, color: "#fa8c16", fontWeight: 600, fontSize: 13 }}>
+                            Short Days ({payroll.shortDays.length})
+                        </div>
+                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                            {payroll.shortDays.map(sd => (
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
+                                    <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </Col>
+                  )}
+
+                  {/* Low Hours */}
+                  {payroll.zeroDays && payroll.zeroDays.length > 0 && (
+                    <Col xs={24} md={12} lg={8}>
+                        <div style={{ marginBottom: 6, color: "#cf1322", fontWeight: 600, fontSize: 13 }}>
+                            Low Hours ({payroll.zeroDays.length})
+                        </div>
+                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                            {payroll.zeroDays.map(sd => (
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
+                                    <Dropdown menu={{
+                                        items: [{ key: 'half', label: 'Half Day' }, { key: 'full', label: 'Full Day' }],
+                                        onClick: ({ key }) => handleMarkPresent(sd.date, employeeInfo, key)
+                                    }}>
+                                        <Button size="small" type="link" danger style={{height: 20, padding: 0}}>Mark</Button>
+                                    </Dropdown>
+                                </div>
+                            ))}
+                        </div>
+                    </Col>
+                  )}
+
+                  {/* Missing Days */}
+                  {payroll.missingDays && payroll.missingDays.length > 0 && (
+                    <Col xs={24} md={12} lg={8}>
+                        <div style={{ marginBottom: 6, color: "#ff4d4f", fontWeight: 600, fontSize: 13 }}>
+                            Absences ({payroll.missingDays.length})
+                        </div>
+                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
+                            {payroll.missingDays.map(dateStr => (
+                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>{dateStr}</span>
+                                    <Dropdown menu={{
+                                        items: [{ key: 'paid', label: 'Grant Paid Leave' }, { key: 'unpaid', label: 'Mark Unpaid' }],
+                                        onClick: ({ key }) => handleGrantLeave(dateStr, employeeInfo, key === 'paid')
+                                    }}>
+                                        <Button size="small" type="link" danger style={{height: 20, padding: 0}}>Action</Button>
+                                    </Dropdown>
+                                </div>
+                            ))}
+                        </div>
+                    </Col>
+                  )}
+              </Row>
+          )}
+
+
+
       </div>
   );
-
-
 
   /* ================= HELPERS & COLUMNS ================= */
   const formatDuration = (hoursDecimal) => {
