@@ -978,6 +978,11 @@ export default function AdminDashboard() {
     // Safety check: Cannot be negative
     if (daysForPay < 0) daysForPay = 0;
 
+    // GUARD: If NO work has been done, force Net Earned to 0.
+    if (presentDaysCount === 0) {
+        daysForPay = 0;
+    }
+
     let payableSalary = (daysForPay * dailyRate) + incentiveAmount;
     if (workingDays === 0) payableSalary = 0;
     
@@ -1435,7 +1440,8 @@ export default function AdminDashboard() {
               <Col xs={12} sm={3}>
                   <Statistic 
                     title="Net Earned" 
-                    value={`${payroll.netEarningDays} / ${payroll.daysInMonth}`} 
+                    value={payroll.netEarningDays} 
+                    suffix={`/ ${payroll.daysInMonth}`}
                     valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
                   />
               </Col>

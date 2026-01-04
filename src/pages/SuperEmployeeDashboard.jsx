@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Table,
   Empty,
   Button,
+  Upload, // Added Upload
   Modal,
   Form,
   Input,
@@ -29,7 +30,8 @@ import {
   CloseOutlined,
   ClockCircleOutlined,
   PlusOutlined,
-  MessageOutlined
+  MessageOutlined,
+  DollarOutlined
 } from "@ant-design/icons";
 import { db, auth } from "../firebase";
 import ChatDrawer from "../components/ChatDrawer";
@@ -42,8 +44,10 @@ import {
   doc,
   deleteDoc,
   getDoc,
+  setDoc, // Added setDoc
   addDoc
 } from "firebase/firestore";
+import Papa from "papaparse"; // Added Papa
 import { signOut, onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 
@@ -65,6 +69,36 @@ const DEFAULT_HOLIDAYS = [
   "2025-10-20", // Diwali (Example)
 ];
 
+const normalize = (v) => (typeof v === "string" ? v.trim() : "");
+
+const getField = (row, variants = []) => {
+  for (const v of variants) {
+    if (row[v] !== undefined && row[v] !== null && row[v] !== "") return normalize(row[v]);
+  }
+  const rowKeys = Object.keys(row);
+  for (const variant of variants) {
+    const lowerVariant = variant.toLowerCase().trim();
+    for (const key of rowKeys) {
+      if (key.toLowerCase().trim() === lowerVariant) {
+        const value = row[key];
+        if (value !== undefined && value !== null && value !== "") return normalize(value);
+      }
+    }
+  }
+  return "";
+};
+
+const parseTimes = (timeValue, numberOfPunches) => {
+  if (!timeValue) return [];
+  let times = [];
+  if (Array.isArray(timeValue)) timeValue = timeValue.filter((v) => v && v.trim()).join(", ");
+  if (typeof timeValue === "string") {
+    times = timeValue.split(",").map((t) => t.trim()).filter((t) => t && t.match(/^\d{1,2}:\d{2}$/));
+  }
+  if (numberOfPunches && numberOfPunches > 0) times = times.slice(0, numberOfPunches);
+  return times;
+};
+
 
 
 export default function SuperEmployeeDashboard() {
@@ -84,6 +118,7 @@ export default function SuperEmployeeDashboard() {
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const [currentUserName, setCurrentUserName] = useState("");
+  const [currentUserSalary, setCurrentUserSalary] = useState(0);
   const screens = Grid.useBreakpoint();
 
   /* ================= AUTH ================= */
@@ -117,6 +152,7 @@ export default function SuperEmployeeDashboard() {
                 const empData = snap.docs[0].data();
                 setEmployeeId(empData.employeeId);
                 setCurrentUserName(empData.firstName ? `${empData.firstName} ${empData.lastName || ''}` : empData.employee);
+                if (empData.salary) setCurrentUserSalary(Number(empData.salary));
             }
         };
         fetchEmpId();
@@ -141,6 +177,85 @@ export default function SuperEmployeeDashboard() {
         };
         fetchAdjustments();
     }, [employeeId, selectedMonth]);
+
+
+
+  const [uploading, setUploading] = useState(false);
+
+  const handleFileUpload = (file) => {
+    setUploading(true);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.trim(),
+      complete: async (results) => {
+        let successCount = 0;
+        for (let i = 0; i < results.data.length; i++) {
+          const row = results.data[i];
+          const employeeId = getField(row, ["Employee", "Employee ID"]);
+          const firstName = getField(row, ["First Name", "FirstName"]);
+          const department = getField(row, ["Department", "Dept"]);
+          
+          let date = getField(row, ["Date"]);
+          // Normalize Date
+          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+          if (d.isValid()) {
+              date = d.format("YYYY-MM-DD");
+          }
+
+          if (!employeeId || !date) continue; // Skip incomplete
+
+          const numberOfPunchesStr = getField(row, ["No. of Punches"]);
+          const numberOfPunches = numberOfPunchesStr ? parseInt(numberOfPunchesStr, 10) : 0;
+          const timeValue = getField(row, ["Time", "Times"]);
+          const punchTimes = parseTimes(timeValue, numberOfPunches);
+          const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
+          
+          // Unique ID
+          const safeEmpId = (employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+          const safeDate = (date || "").replace(/[^a-zA-Z0-9-]/g, "_");
+          const uniqueId = `${safeEmpId}_${safeDate}`;
+
+          const docData = {
+            employeeId: employeeId || "",
+            firstName: firstName || "",
+            email: firstName ? `${firstName.toLowerCase()}@theawakens.com` : "",
+            employee: firstName ? `${firstName} (${employeeId || "N/A"})` : employeeId || "Unknown",
+            department: department || "",
+            date: date || "",
+            numberOfPunches: punchTimes.length,
+            punchTimes,
+            inTime,
+            outTime,
+            hours: totalHours,
+            uploadedAt: new Date().toISOString(),
+          };
+
+          // CRITICAL: Filter for Employee - Only upload own data
+          // If the derived email does not match the logged-in user, skip it to avoid Permission Denied
+          if (docData.email !== userEmail) {
+              console.warn(`Skipping row for ${docData.email} (Not me: ${userEmail})`);
+              continue; 
+          }
+          try {
+            await setDoc(doc(db, "punches", uniqueId), docData);
+            successCount++;
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        setUploading(false);
+        fetchMyData(); // Refresh list
+        message.success(`${successCount} rows processed successfully`);
+      },
+      error: (err) => {
+        console.error(err);
+        message.error("CSV parse error");
+        setUploading(false);
+      },
+    });
+    return false;
+  };
 
   /* ================= PAYROLL CALCULATIONS ================= */
   const calculateWorkingDays = (monthDayjs) => {
@@ -397,17 +512,20 @@ export default function SuperEmployeeDashboard() {
         hCurr = hCurr.add(1, 'day');
     }
 
-    // Fix for "High Hours but Low Days" (Restored)
+    // --- SALARY CALCULATION (Synced with Admin) ---
+    // Rule: Earned Days + Unworked Weekend + Unworked Holidays - Sandwich Deductions + Paid Leaves
+    
+    // Fix for "High Hours but Low Days"
     let effectivelyEarnedDays = earnedDays;
     if (eligibleHours >= targetHours && workingDays > 0) {
         effectivelyEarnedDays = boostedDays;
     } else {
-        // NEW: HOURS-BASED FALLBACK
+        // HOURS-BASED FALLBACK
         const shortage = Math.max(0, targetHours - eligibleHours);
         const shortageDays = shortage / 8;
         const hoursBasedDays = Math.max(0, workingDays - shortageDays);
-
-        // Round to nearest 0.5 (Half Day)
+        
+        // Round to nearest 0.5
         const snappedDays = Math.floor(hoursBasedDays * 2) / 2;
 
         if (snappedDays > effectivelyEarnedDays) {
@@ -415,26 +533,45 @@ export default function SuperEmployeeDashboard() {
         }
     }
 
-    // Logic: Earned Days + Unworked Weekend + Unworked Holidays (minus sandwich) + Paid Leaves
-    // This prevents double counting.
-    let netEarningDays = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount - sandwichDeduction;
-    
-    // --- FINAL SALARY CAPPING ---
-    // Rule: We deduct Unpaid Leaves from the max possible days.
-    const actualAbsencesCount = (missingDays.length || 0) + (zeroDays.length || 0);
-    let unpaidLeavesCount = (missingDays.length || 0) + (zeroDays.length || 0) + ((leavesCount || 0) - (paidLeavesCount || 0));
+    // Rule: Overtime CAP.
+    effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount);
 
+    // New Formula: (Present Days + Unworked Weekends + Unworked Holidays)
+    let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount;
+    
+    // ADJUST FOR SANDWICH
+    daysForPay -= sandwichDeduction;
+
+    // APPLY GRANTED LEAVES (User Adjustment)
+    daysForPay += paidLeavesCount;
+
+    // Calculate Billable Days
+    const billableDays = selectedMonth.daysInMonth();
+    
+    // Final Salary Capping
+    const actualAbsencesCount = missingDays.length + zeroDays.length;
+    let unpaidLeavesForDeduction = (missingDays.length + zeroDays.length + leavesCount) - paidLeavesCount;
+    
     if (eligibleHours >= targetHours && workingDays > 0) {
-        unpaidLeavesCount = (actualAbsencesCount || 0) + ((leavesCount || 0) - (paidLeavesCount || 0));
+        unpaidLeavesForDeduction = (actualAbsencesCount + leavesCount) - paidLeavesCount;
     }
     
-    // Max Payable = Total Days - Unpaid Leaves
-    const maxPayableDays = selectedMonth.daysInMonth() - unpaidLeavesCount;
-    netEarningDays = Math.min(netEarningDays, maxPayableDays);
+    const maxPayableDays = billableDays - Math.max(0, unpaidLeavesForDeduction);
+    daysForPay = Math.min(daysForPay, maxPayableDays);
     
-    // Cap at days in month (or billable days)
-    netEarningDays = Math.min(netEarningDays, selectedMonth.daysInMonth()); // Logical Cap
-    if (netEarningDays < 0) netEarningDays = 0;
+    // Final Safe Cap
+    daysForPay = Math.min(daysForPay, billableDays);
+    if (daysForPay < 0) daysForPay = 0;
+
+    // GUARD: If NO work has been done, force Net Earned to 0.
+    if (presentDaysCount === 0) {
+        daysForPay = 0;
+    }
+
+    // --- SALARY CALCULATION ---
+    const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
+    const dailyRate = billableDays > 0 ? monthlySalary / billableDays : 0;
+    const payableSalary = (daysForPay * dailyRate);
 
     return {
       workingDays,
@@ -444,14 +581,22 @@ export default function SuperEmployeeDashboard() {
       eligibleHours,
       missingDays,
       shortDays, 
-      totalLeaves,
-      sandwichDays, // Export
+      zeroDays, // Export for UI
+      totalLeaves: (missingDays.length + zeroDays.length + leavesCount) - paidLeavesCount,
+      sandwichDays, 
       passedWorkingDays,
       passedTargetHours,
       passedEligibleHours,
       passedDifference: passedEligibleHours - passedTargetHours,
+      // Salary specific exports
+      payableSalary: Math.round(payableSalary), 
+      monthlySalary,
+      incentiveAmount: 0, 
+      grantedLeaves: paidLeavesCount,
+      grantedHours: currentMonthAdj.grantedHours || 0,
+      grantedShortageDates: currentMonthAdj.grantedShortageDates || [],
       // Net Earning Days Logic
-      netEarningDays: netEarningDays,
+      netEarningDays: daysForPay,
       daysInMonth: selectedMonth.daysInMonth()
     };
   };
@@ -528,7 +673,8 @@ export default function SuperEmployeeDashboard() {
               <Col xs={12} sm={3}>
                   <Statistic 
                     title="Net Earned" 
-                    value={`${payroll.netEarningDays} / ${payroll.daysInMonth}`} 
+                    value={payroll.netEarningDays} 
+                    suffix={`/ ${payroll.daysInMonth}`}
                     valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
                   />
               </Col>
@@ -565,16 +711,7 @@ export default function SuperEmployeeDashboard() {
                     valueStyle={{ fontSize: 16, color: payroll.passedDifference < 0 ? "#ff4d4f" : "#52c41a", fontWeight: 600 }} 
                   />
               </Col>
-              <Col xs={12} sm={4}>
-                  <Statistic 
-                    title="Est. Salary" 
-                    value={payroll.payableSalary} 
-                    precision={0}
-                    prefix={<DollarOutlined />}
-                    valueStyle={{ fontSize: 16, color: "#52c41a", fontWeight: 600 }} 
-                    suffix={payroll.incentiveAmount > 0 ? <Tag color="gold" style={{marginLeft: 5, fontSize: 10}}>+Inc</Tag> : null}
-                  />
-              </Col>
+
           </Row>
 
           {/* COLLAPSIBLE DETAILS SECTION */}
@@ -1074,14 +1211,11 @@ export default function SuperEmployeeDashboard() {
               Refresh
             </Button>
             <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
-            {/* Upload Page Button */}
-            <Button
-              type="primary"
-              icon={<UploadOutlined />}
-              onClick={() => navigate("/upload")}
-            >
-              Upload CSV
-            </Button>
+
+            {/* Upload Page Button Inline - Same as Admin */}
+            <Upload beforeUpload={handleFileUpload} showUploadList={false} accept=".csv">
+                <Button type="primary" icon={<UploadOutlined />} loading={uploading}>Upload CSV</Button>
+            </Upload>
             <Button danger icon={<LogoutOutlined />} onClick={handleLogout}>
               Logout
             </Button>

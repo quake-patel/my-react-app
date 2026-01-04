@@ -17,9 +17,13 @@ service cloud.firestore {
       allow read: if request.auth != null
         && request.auth.token.email == resource.data.email;
       
+      // Allow Employees to Create/Update their OWN records (for CSV Upload)
+      allow create: if request.auth != null 
+        && request.resource.data.email == request.auth.token.email;
+        
       allow update: if request.auth != null
-        && request.auth.token.email == resource.data.email
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['highlightedTimes']);
+        && request.resource.data.email == request.auth.token.email
+        && (resource.data.email == request.auth.token.email || resource == null);
     }
     
     match /requests/{requestId} {
