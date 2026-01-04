@@ -211,6 +211,8 @@ export default function EmployeeDashboard() {
     const shortDays = []; // NEW
     const zeroDays = []; // Fix: Defined for usage below
     const today = dayjs();
+    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
+
     let earnedDays = 0;
     let presentDaysCount = 0;
 
@@ -302,16 +304,27 @@ export default function EmployeeDashboard() {
               // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded
               let hoursForPay = dailyHours;
               let earned = 0;
+              let boosted = 0;
+
               if (isWeekend || isHoliday) {
                   earned = 1;
+                  boosted = 1;
               } else {
                   if (hoursForPay >= 8) {
                       earned = 1;
+                      boosted = 1;
                   } else if (hoursForPay >= 3) {
                       earned = 0.5;
+                      
+                      if (r.isManualEntry) {
+                        boosted = 0.5;
+                      } else {
+                        boosted = 1;
+                      }
                   }
               }
               earnedDays += earned;
+              boostedDays += boosted; // Accumulate boosted days
 
               if (isWeekend || isHoliday || hoursForPay >= 3) {
                   presentDaysCount += 1;
@@ -410,9 +423,8 @@ export default function EmployeeDashboard() {
         sCurr = sCurr.add(1, 'day');
     }
     
-    // DISABLE SANDWICH LOGIC
-    sandwichDeduction = 0;
-    sandwichDays.length = 0;
+    // SANDWICH LOGIC ENABLED
+
 
     // --- HOLIDAY LOGIC ---
     let unworkedHolidayCount = 0;
@@ -433,7 +445,19 @@ export default function EmployeeDashboard() {
     // Fix for "High Hours but Low Days" (Restored)
     let effectivelyEarnedDays = earnedDays;
     if (eligibleHours >= targetHours && workingDays > 0) {
-        effectivelyEarnedDays = presentDaysCount;
+        effectivelyEarnedDays = boostedDays;
+    } else {
+        // NEW: HOURS-BASED FALLBACK
+        const shortage = Math.max(0, targetHours - eligibleHours);
+        const shortageDays = shortage / 8;
+        const hoursBasedDays = Math.max(0, workingDays - shortageDays);
+        
+        // Round to nearest 0.5 (Half Day)
+        const snappedDays = Math.floor(hoursBasedDays * 2) / 2;
+
+        if (snappedDays > effectivelyEarnedDays) {
+            effectivelyEarnedDays = snappedDays;
+        }
     }
 
     // Logic: Earned Days + Unworked Weekend + Unworked Holidays (minus sandwich) + Paid Leaves

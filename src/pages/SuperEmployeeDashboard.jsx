@@ -203,6 +203,8 @@ export default function SuperEmployeeDashboard() {
     let earnedDays = 0;
     let presentDaysCount = 0;
     const today = dayjs();
+    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
+
     
 
     const currentMonthAdj = adjustments[selectedMonth.format("YYYY-MM")] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
@@ -375,9 +377,8 @@ export default function SuperEmployeeDashboard() {
         sCurr = sCurr.add(1, 'day');
     }
     
-    // DISABLE SANDWICH LOGIC
-    sandwichDeduction = 0;
-    sandwichDays.length = 0;
+    // SANDWICH LOGIC ENABLED
+
 
     // --- HOLIDAY LOGIC ---
     let unworkedHolidayCount = 0;
@@ -398,7 +399,19 @@ export default function SuperEmployeeDashboard() {
     // Fix for "High Hours but Low Days" (Restored)
     let effectivelyEarnedDays = earnedDays;
     if (eligibleHours >= targetHours && workingDays > 0) {
-        effectivelyEarnedDays = presentDaysCount;
+        effectivelyEarnedDays = boostedDays;
+    } else {
+        // NEW: HOURS-BASED FALLBACK
+        const shortage = Math.max(0, targetHours - eligibleHours);
+        const shortageDays = shortage / 8;
+        const hoursBasedDays = Math.max(0, workingDays - shortageDays);
+
+        // Round to nearest 0.5 (Half Day)
+        const snappedDays = Math.floor(hoursBasedDays * 2) / 2;
+
+        if (snappedDays > effectivelyEarnedDays) {
+            effectivelyEarnedDays = snappedDays;
+        }
     }
 
     // Logic: Earned Days + Unworked Weekend + Unworked Holidays (minus sandwich) + Paid Leaves

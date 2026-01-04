@@ -637,6 +637,7 @@ export default function AdminDashboard() {
     const recordedDates = [];
     const shortDays = []; // For UI (3 to 8 hours)
     const zeroDays = []; // For UI (< 3 hours)
+    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
     const today = dayjs();
 
     monthlyRecords.forEach(r => {
@@ -793,23 +794,33 @@ export default function AdminDashboard() {
         let hoursForPay = dailyHours;
         // if (isWeekend && !r.weekendApproved) hoursForPay = 0;
         
-        // Calculate Worked Days (Discrete Logic: 0, 0.5, or 1)
-        // Rule: < 3 Hours = 0 (Leave)
-        // Rule: 3 to < 8 Hours = 0.5 (Half Day)
-        // Rule: >= 8 Hours = 1.0 (Full Day)
+        // Earned Days Calculation
         // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded 
         // to prevent 0-hour or half-day records from penalizing the "Paid Off" benefit.
         let earned = 0;
+        let boosted = 0;
+
         if (isWeekend || isHoliday) {
             earned = 1;
+            boosted = 1;
         } else {
             if (hoursForPay >= 8) {
                 earned = 1;
+                boosted = 1;
             } else if (hoursForPay >= 3) {
                 earned = 0.5;
+                // Boost Logic: If High Hours (Overtime), we normally boost Short Days (3-8h) to Full Days.
+                // EXCEPTION: If it is a MANUAL entry (e.g. "Mark as Half Day"), we respect the users decision 
+                // and keep it as 0.5 regardless of total hours.
+                if (r.isManualEntry) {
+                    boosted = 0.5;
+                } else {
+                    boosted = 1;
+                }
             }
         }
         earnedDays += earned;
+        boostedDays += boosted;
 
         if (isWeekend || isHoliday || hoursForPay >= 3) {
             presentDaysCount += 1;
@@ -844,7 +855,24 @@ export default function AdminDashboard() {
     // This allows 14h day to cover a 6.5h day.
     // Note: Absences (0h) are NOT in presentDaysCount, so they remain Unpaid (guaranteed by Safety Cap).
     if (eligibleHours >= targetHours && workingDays > 0) {
-        effectivelyEarnedDays = presentDaysCount;
+        effectivelyEarnedDays = boostedDays;
+    } else {
+        // NEW: HOURS-BASED FALLBACK
+        // If they missed the target (e.g. 157 / 160), the discrete logic might punish them heavily (4.5 days).
+        // The hours logic (3h shortage = 0.4 days) is fairer.
+        // We calculate what the days WOULD be if purely based on hours 8h/day.
+        const shortage = Math.max(0, targetHours - eligibleHours);
+        const shortageDays = shortage / 8;
+        const hoursBasedDays = Math.max(0, workingDays - shortageDays);
+        
+        // Round to nearest 0.5 (Half Day)
+        // User Request: "show like 1/30 or 1.5/30"
+        const snappedDays = Math.floor(hoursBasedDays * 2) / 2;
+
+        // We use the BETTER of the two: Discrete vs Proportional.
+        if (snappedDays > effectivelyEarnedDays) {
+            effectivelyEarnedDays = snappedDays;
+        }
     }
 
     // Rule: Overtime CAP.
@@ -895,9 +923,8 @@ export default function AdminDashboard() {
         sCurr = sCurr.add(1, 'day');
     }
     
-    // DISABLE SANDWICH LOGIC (User Request)
-    sandwichDeduction = 0;
-    sandwichDays.length = 0; // Clear array
+    // SANDWICH LOGIC ENABLED
+
 
     // --- HOLIDAY LOGIC ---
     // Count weekdays that are holidays for Pay (Unworked)
