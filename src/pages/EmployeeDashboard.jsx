@@ -16,7 +16,8 @@ import {
   Col,
   Statistic,
   Tag,
-  Grid
+  Grid,
+  List // Added List
 } from "antd";
 import {
   ReloadOutlined,
@@ -145,6 +146,7 @@ export default function EmployeeDashboard() {
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [chatOpen, setChatOpen] = useState(false);
   const [holidays, setHolidays] = useState([]);
+  const [holidayModalOpen, setHolidayModalOpen] = useState(false); // Added State
   const [adjustments, setAdjustments] = useState({}); // Stores adjustments for current month
   const [employeeId, setEmployeeId] = useState(null);
   const [form] = Form.useForm();
@@ -201,12 +203,7 @@ export default function EmployeeDashboard() {
             uploadedAt: new Date().toISOString(),
           };
 
-          // CRITICAL: Filter for Employee - Only upload own data
-          // If the derived email does not match the logged-in user, skip it to avoid Permission Denied
-          if (docData.email !== userEmail) {
-              console.warn(`Skipping row for ${docData.email} (Not me: ${userEmail})`);
-              continue; 
-          }
+          // CRITICAL: Filter Removed as per User Request "upload all data of csv like in the admin dasboad"
           try {
             // Use setDoc to overwrite/merge (Same as Admin)
             await setDoc(doc(db, "punches", uniqueId), docData);
@@ -800,7 +797,6 @@ export default function EmployeeDashboard() {
                             {payroll.missingDays.map(dateStr => (
                                 <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <span>{dateStr}</span>
-                                    <Button type="primary" ghost danger size="small" onClick={() => openRequestModal(dateStr, 'Leave Request')} style={{height: 22, fontSize: 11}}>Request Leave</Button>
                                 </div>
                             ))}
                         </div>
@@ -1011,8 +1007,12 @@ export default function EmployeeDashboard() {
         const dayOfWeekIndex = d.day(); // 0=Sun, 6=Sat
         const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
         
+        // Check if it is a holiday
+        const holidayObj = holidays.find(h => h.date === r.date);
+        const holidayName = holidayObj ? holidayObj.name : null;
+
         // Punch parsing
-      const sortedPunches = (r.punchTimes || []).sort();
+        const sortedPunches = (r.punchTimes || []).sort();
         
         // Hours Calc
         let dailyHours = 0;
@@ -1027,29 +1027,13 @@ export default function EmployeeDashboard() {
            dailyHours = h + (m/60);
         }
 
-        // Target & Shortfall
-        // Weekends target is 0 unless manually overridden or logic changes?
-        // Screenshot shows Weekends have "Total Hours" (meaning target) as 0:00:00.
-        // And "Present Hours" as 0:00:00.
-        // Normal days have 8:00:00.
-        
         const targetHours = isWeekend ? 0 : 8;
         const shortfall = targetHours - dailyHours;
         const hoursShortBy = shortfall > 0 ? shortfall : 0;
         
-        // Present Days
-        // Logic: If working on a weekday or approved weekend? 
-        // Screenshot shows "1" for Present Days on normal working days. "0" on Sunday/Saturday (even if absent).
-        // If absent on Monday, it is "1" in Present Days? No, Screenshot Monday has "1" and Present Hours > 0.
-        // Wait, screenshot shows Saturday/Sunday have "0" Present Days.
-        // Present Days: Days with >= 3 hours (Half Day or Full Day)
         const presentDayCount = dailyHours >= 3 ? 1 : 0; 
-
-        // Checks
-        // Weekend Checks: 1 if it IS a weekend? Screenshot shows "1" for Sat/Sun.
         const weekendCheck = isWeekend ? 1 : 0;
 
-        // Leave Check: Explicit Leave OR Low Hours (< 3) on a Weekday
         let isLowHoursLeave = false;
         if (!isWeekend && dailyHours < 3 && !r.isLeave) {
             isLowHoursLeave = true;
@@ -1059,17 +1043,18 @@ export default function EmployeeDashboard() {
         
         return {
            ...r,
-           fullDate: getDayOfWeek(r.date),
+           fullDate: getDayOfWeek(r.date) + (holidayName ? ` - ${holidayName}` : ""),
            sortedPunches,
            targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
            presentHoursFormatted: formatDuration(dailyHours),
            hoursShortByFormatted: formatDuration(hoursShortBy),
            presentDays: presentDayCount,
            leaveCheck: (r.isLeave || isLowHoursLeave) ? 1 : 0,
-           daySwapOff: 0, // Placeholder
+           daySwapOff: 0,
            weekendCheck,
-           paidHolidays: 0, // Need to cross-check with holidays array if possible, but 'r' might not have it unless joined
-           isWeekend
+           paidHolidays: holidayName ? 1 : 0,
+           isWeekend,
+           isHolidayRow: !!holidayName
         };
       });
 
@@ -1095,7 +1080,7 @@ export default function EmployeeDashboard() {
             presentHoursFormatted: "0:00:00",
             hoursShortByFormatted: isWeekend ? "0:00:00" : "8:00:00",
             presentDays: 0, // Absent
-            leaveCheck: isWeekend ? 0 : 1, // Using 1 for Absent on Weekdays as requested ("show as Leave")
+            leaveCheck: isWeekend ? 0 : 1, // Using 1 for Absent on Weekdays
             daySwapOff: 0,
             weekendCheck: isWeekend ? 1 : 0,
             paidHolidays: 0,
@@ -1103,10 +1088,43 @@ export default function EmployeeDashboard() {
             isWeekend
           };
       });
-
-      const combined = [...filtered, ...missing];
       
-      // 4. Sort Ascending for the table (Screenshot usually shows chronological, but code was Descending. Let's make it Ascending based on screenshot)
+      // 4. Add Holiday Rows (for unworked holidays)
+      const holidayRows = holidays.filter(h => {
+          if(!selectedMonth) return true;
+          const d = dayjs(h.date);
+          return d.isValid() && d.isSame(selectedMonth, 'month');
+      }).filter(h => {
+          // Exclude if already in records (worked)
+          const inRecords = records.some(r => r.date === h.date);
+          // Also exclude if in missing? (Shouldn't be, logic confirmed)
+          return !inRecords; 
+      }).map(h => {
+           const d = dayjs(h.date);
+           const dayOfWeekIndex = d.day();
+           const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
+           
+           return {
+             id: `holiday-${h.date}`,
+             date: h.date,
+             fullDate: getDayOfWeek(h.date) + ` - ${h.name} (Holiday)`,
+             in1: "", out1: "", in2: "", out2: "", in3: "",
+             targetHoursFormatted: "8:00:00",
+             presentHoursFormatted: "0:00:00", // Not worked
+             hoursShortByFormatted: "0:00:00", // No shortage for holiday
+             presentDays: 1, // Counts as present
+             leaveCheck: 0,
+             weekendCheck: isWeekend ? 1 : 0,
+             paidHolidays: 1,
+             isMissing: false,
+             isWeekend,
+             isHolidayRow: true
+           };
+      });
+
+      const combined = [...filtered, ...missing, ...holidayRows];
+      
+      // 5. Sort Ascending
       combined.sort((a, b) => {
         const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
         const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
@@ -1114,7 +1132,7 @@ export default function EmployeeDashboard() {
       });
       
       return combined;
-  }, [records, payroll, selectedMonth, userEmail]);
+  }, [records, payroll, selectedMonth, userEmail, holidays]);
 
   /* ================= TABLE ================= */
   const maxPunches = React.useMemo(() => {
@@ -1211,6 +1229,7 @@ export default function EmployeeDashboard() {
             <Upload beforeUpload={handleFileUpload} showUploadList={false} accept=".csv">
                 <Button type="primary" icon={<UploadOutlined />} loading={uploading}>Upload CSV</Button>
             </Upload>
+            <Button icon={<ClockCircleOutlined />} onClick={() => setHolidayModalOpen(true)}>Holidays</Button>
             <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
             <Button danger icon={<LogoutOutlined />} onClick={handleLogout}>
               Logout
@@ -1295,6 +1314,30 @@ export default function EmployeeDashboard() {
               </Button>
             </div>
           </Form>
+        </Modal>
+
+        {/* READ ONLY HOLIDAY MODAL */}
+        <Modal 
+            open={holidayModalOpen} 
+            title="Holidays List" 
+            footer={null} 
+            onCancel={() => setHolidayModalOpen(false)}
+        >
+            <List
+                bordered
+                dataSource={holidays}
+                renderItem={(item) => (
+                    <List.Item>
+                        <List.Item.Meta
+                            title={item.name}
+                            description={item.date}
+                        />
+                    </List.Item>
+                )}
+            />
+            <div style={{ marginTop: 16, color: "#888", fontSize: 12 }}>
+                Note: Weekends (Sat/Sun) are automatically excluded working days.
+            </div>
         </Modal>
       </div>
       <ChatDrawer 

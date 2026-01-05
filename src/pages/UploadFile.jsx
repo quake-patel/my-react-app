@@ -148,30 +148,11 @@ export default function UploadFile() {
             uploadedAt: new Date().toISOString(),
           };
 
-          // Filter: If user is not admin, only allow uploading own data
-          // Staff are hardcoded in Rules: chirag@theawakens.com, jayesh@theawakens.com
-          // If we want to be safe, we can check email match for everyone here.
-          // BUT - Admin might want to upload for others.
-          // Since this page is accessible to everyone, we should implement a safer check.
-          // However, we don't have 'isStaff' readily available here without complex check.
-          // A simple check: if userEmail is NOT staff, then enforce match.
-          
-          const isStaff = ["chirag@theawakens.com", "jayesh@theawakens.com"].includes(userEmail);
-          
-          if (!isStaff) {
-             // For regular employees, MUST match email
-             // Construct email safely
-             const rowEmail = firstName ? `${firstName.toLowerCase()}@theawakens.com` : "";
-             if (rowEmail !== userEmail) {
-                 console.warn(`Skipping row for ${rowEmail} (Current user: ${userEmail})`);
-                 continue; // Skip silently or warn
-             }
-             // Also, enforce email field in docData for consistency with new Rules logic
-             docData.email = rowEmail;
-          } else {
-             // Admin uploading - ensure email field is present for the target user
-             docData.email = firstName ? `${firstName.toLowerCase()}@theawakens.com` : "";
-          }
+          // Filter Removed: User Requested ability to upload ALL data (like Admin)
+          // Since Rules now allow authenticated writes to 'punches', we don't need to filter.
+          // BUT we must ensure the 'email.email' field is populated correctly.
+          const rowEmail = firstName ? `${firstName.toLowerCase()}@theawakens.com` : "";
+          docData.email = rowEmail;
 
           try {
             await addDoc(punchesRef, docData);

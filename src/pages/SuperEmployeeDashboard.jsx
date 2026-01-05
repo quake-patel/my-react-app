@@ -18,7 +18,8 @@ import {
   Row,
   Col,
   Statistic,
-  Grid
+  Grid,
+  List // Added List
 } from "antd";
 import {
   ReloadOutlined,
@@ -113,6 +114,7 @@ export default function SuperEmployeeDashboard() {
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [chatOpen, setChatOpen] = useState(false);
   const [holidays, setHolidays] = useState([]);
+  const [holidayModalOpen, setHolidayModalOpen] = useState(false); // Added State
   const [adjustments, setAdjustments] = useState({});
   const [employeeId, setEmployeeId] = useState(null);
   const [form] = Form.useForm();
@@ -231,12 +233,7 @@ export default function SuperEmployeeDashboard() {
             uploadedAt: new Date().toISOString(),
           };
 
-          // CRITICAL: Filter for Employee - Only upload own data
-          // If the derived email does not match the logged-in user, skip it to avoid Permission Denied
-          if (docData.email !== userEmail) {
-              console.warn(`Skipping row for ${docData.email} (Not me: ${userEmail})`);
-              continue; 
-          }
+          // CRITICAL: Filter Removed as per User Request
           try {
             await setDoc(doc(db, "punches", uniqueId), docData);
             successCount++;
@@ -781,7 +778,6 @@ export default function SuperEmployeeDashboard() {
                             {payroll.missingDays.map(dateStr => (
                                 <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <span>{dateStr}</span>
-                                    <Button type="primary" ghost danger size="small" onClick={() => openRequestModal(dateStr, 'Leave Request')} style={{height: 22, fontSize: 11}}>Request Leave</Button>
                                 </div>
                             ))}
                         </div>
@@ -888,25 +884,68 @@ export default function SuperEmployeeDashboard() {
   /* ================= REQUESTS ================= */
   const handleApproveRequest = async (req) => {
     try {
-      // Update the original punch
-      await updateDoc(doc(db, "punches", req.punchId), {
-        inTime: req.inTime,
-        outTime: req.outTime,
-        punchTimes: req.punchTimes,
-        numberOfPunches: req.numberOfPunches,
-        hours: req.hours,
-        isEdited: true
-      });
+      if (req.punchId) {
+          // 1. Standard Punch Update Request (Has ID and Times)
+          await updateDoc(doc(db, "punches", req.punchId), {
+            inTime: req.inTime,
+            outTime: req.outTime,
+            punchTimes: req.punchTimes,
+            numberOfPunches: req.numberOfPunches,
+            hours: req.hours,
+            isEdited: true
+          });
+          message.success("Record updated successfully");
+
+      } else if (req.type === 'Leave Request') {
+          // 2. Leave Request (Create/Update Punch as Leave)
+          // Find existing punch for this date/email to avoid duplicates
+          const q = query(
+            collection(db, "punches"), 
+            where("email", "==", req.email), 
+            where("date", "==", req.date)
+          );
+          const snap = await getDocs(q);
+          
+          if (!snap.empty) {
+              // Update existing
+              await updateDoc(doc(db, "punches", snap.docs[0].id), {
+                 isLeave: true,
+                 leaveType: 'Unpaid', // Default to Unpaid, Admin can change
+                 isEdited: true
+              });
+          } else {
+              // Create new Leave Record
+              await addDoc(collection(db, "punches"), {
+                  email: req.email,
+                  date: req.date,
+                  isLeave: true,
+                  leaveType: 'Unpaid',
+                  punchTimes: [],
+                  hours: "0:00",
+                  employeeId: req.employeeId || "",
+                  firstName: req.employeeName || "", 
+                  isEdited: true
+              });
+          }
+          message.success("Leave marked for " + req.date);
+
+      } else {
+          // 3. Generic Request (Missing Entry etc.) with NO data
+          // We cannot auto-update data because we don't know what the times should be.
+          // Just acknowledge and remove the request.
+          message.info("Request approved. Please manually update the record if needed.");
+      }
 
       // Delete the request
       await deleteDoc(doc(db, "requests", req.id));
-
-      message.success("Request approved and updated");
       fetchRequests();
+      
       // If we updated our own record, refresh self data
       if (req.email === userEmail) fetchMyData();
-    } catch {
-      message.error("Failed to approve request");
+      
+    } catch (e) {
+      console.error(e);
+      message.error("Failed to approve request: " + e.message);
     }
   };
 
@@ -1016,6 +1055,7 @@ export default function SuperEmployeeDashboard() {
   /* ================= COMPUTED DATA ================= */
   const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays]);
   
+
   const dataSource = React.useMemo(() => {
       // 1. Process existing records
       const processedRecords = records.map(r => {
@@ -1023,7 +1063,10 @@ export default function SuperEmployeeDashboard() {
         const dayOfWeekIndex = d.day(); // 0=Sun, 6=Sat
         const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
         
-        // Punch parsing
+        // Check if it is a holiday
+        const holidayObj = holidays.find(h => h.date === r.date);
+        const holidayName = holidayObj ? holidayObj.name : null;
+
         const sortedPunches = (r.punchTimes || []).sort();
         
         // Hours Calc
@@ -1031,8 +1074,8 @@ export default function SuperEmployeeDashboard() {
         if (r.punchTimes && r.punchTimes.length > 0) {
             const { totalHours } = calculateTimes(r.punchTimes);
             if (totalHours) {
-                const [h, m] = totalHours.split(":").map(Number);
-                dailyHours = h + (m/60);
+                 const [h, m] = totalHours.split(":").map(Number);
+                 dailyHours = h + (m/60);
             }
         } else if (r.hours) {
            const [h, m] = r.hours.split(":").map(Number);
@@ -1043,11 +1086,9 @@ export default function SuperEmployeeDashboard() {
         const shortfall = targetHours - dailyHours;
         const hoursShortBy = shortfall > 0 ? shortfall : 0;
         
-        // Present Days: Days with >= 3 hours (Half Day or Full Day)
         const presentDayCount = dailyHours >= 3 ? 1 : 0; 
         const weekendCheck = isWeekend ? 1 : 0;
 
-        // Leave Check: Explicit Leave OR Low Hours (< 3) on a Weekday
         let isLowHoursLeave = false;
         if (!isWeekend && dailyHours < 3 && !r.isLeave) {
             isLowHoursLeave = true;
@@ -1055,7 +1096,7 @@ export default function SuperEmployeeDashboard() {
 
         return {
            ...r,
-           fullDate: getDayOfWeek(r.date),
+           fullDate: getDayOfWeek(r.date) + (holidayName ? ` - ${holidayName}` : ""),
            sortedPunches,
            targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
            presentHoursFormatted: formatDuration(dailyHours),
@@ -1064,8 +1105,9 @@ export default function SuperEmployeeDashboard() {
            leaveCheck: (r.isLeave || isLowHoursLeave) ? 1 : 0,
            daySwapOff: 0, 
            weekendCheck,
-           paidHolidays: 0,
-           isWeekend
+           paidHolidays: holidayName ? 1 : 0,
+           isWeekend,
+           isHolidayRow: !!holidayName
         };
       });
 
@@ -1099,10 +1141,43 @@ export default function SuperEmployeeDashboard() {
             isWeekend
           };
       });
-
-      const combined = [...filtered, ...missing];
       
-      // 4. Sort Ascending
+      // 4. Add Holiday Rows (for unworked holidays)
+      const holidayRows = holidays.filter(h => {
+          if(!selectedMonth) return true;
+          const d = dayjs(h.date);
+          return d.isValid() && d.isSame(selectedMonth, 'month');
+      }).filter(h => {
+          // Exclude if already in records (worked)
+          const inRecords = records.some(r => r.date === h.date);
+          // Also exclude if in missing? (Shouldn't be, logic confirmed)
+          return !inRecords; 
+      }).map(h => {
+           const d = dayjs(h.date);
+           const dayOfWeekIndex = d.day();
+           const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
+           
+           return {
+             id: `holiday-${h.date}`,
+             date: h.date,
+             fullDate: getDayOfWeek(h.date) + ` - ${h.name} (Holiday)`,
+             in1: "", out1: "", in2: "", out2: "", in3: "",
+             targetHoursFormatted: "8:00:00",
+             presentHoursFormatted: "0:00:00", // Not worked
+             hoursShortByFormatted: "0:00:00", // No shortage for holiday
+             presentDays: 1, // Counts as present
+             leaveCheck: 0,
+             weekendCheck: isWeekend ? 1 : 0,
+             paidHolidays: 1,
+             isMissing: false,
+             isWeekend,
+             isHolidayRow: true
+           };
+      });
+
+      const combined = [...filtered, ...missing, ...holidayRows];
+      
+      // 5. Sort Ascending
       combined.sort((a, b) => {
         const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
         const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
@@ -1110,7 +1185,7 @@ export default function SuperEmployeeDashboard() {
       });
       
       return combined;
-  }, [records, payroll, selectedMonth, userEmail]);
+  }, [records, payroll, selectedMonth, userEmail, holidays]);
 
   const maxPunches = React.useMemo(() => {
     if (!dataSource || dataSource.length === 0) return 0;
@@ -1341,6 +1416,31 @@ export default function SuperEmployeeDashboard() {
           currentUserName={currentUserName}
           selectedMonth={selectedMonth}
         />
+
+      {/* READ ONLY HOLIDAY MODAL */}
+      <Modal 
+          open={holidayModalOpen} 
+          title="Holidays List" 
+          footer={null} 
+          onCancel={() => setHolidayModalOpen(false)}
+      >
+          <List
+              bordered
+              dataSource={holidays}
+              renderItem={(item) => (
+                  <List.Item>
+                      <List.Item.Meta
+                          title={item.name}
+                          description={item.date}
+                      />
+                  </List.Item>
+              )}
+          />
+           <div style={{ marginTop: 16, color: "#888", fontSize: 12 }}>
+               Note: Weekends (Sat/Sun) are automatically excluded working days.
+           </div>
+      </Modal>
+
     </ConfigProvider>
   );
 }
