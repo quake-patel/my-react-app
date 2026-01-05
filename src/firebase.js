@@ -2,12 +2,12 @@ import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth"
 import { getFirestore } from "firebase/firestore";
 import { initializeApp } from "firebase/app";
 const firebaseConfig = {
-  apiKey: "AIzaSyD72w8byxSClVsv5dCmeZLH4A8z2oMCHTY",
-  authDomain: "employee-time-tracker-43b16.firebaseapp.com",
-  projectId: "employee-time-tracker-43b16",
-  storageBucket: "employee-time-tracker-43b16.firebasestorage.app",
-  messagingSenderId: "950200529981",
-  appId: "1:950200529981:web:a21a1207109dd6453e6654"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
