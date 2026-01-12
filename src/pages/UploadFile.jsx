@@ -6,6 +6,9 @@ import { db, auth } from "../firebase";
 import { collection, addDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
+import dayjs from "dayjs";
+import customParseFormat from "dayjs/plugin/customParseFormat";
+dayjs.extend(customParseFormat);
 
 const { Content } = Layout;
 const { darkAlgorithm, defaultAlgorithm } = theme;
@@ -103,23 +106,25 @@ export default function UploadFile() {
           
           // Date Normalization
           let dateStr = getField(row, ["Date", "Punch Date"]);
-          // Try to convert DD/MM/YYYY or DD-MM-YYYY to YYYY-MM-DD
-          // Simple heuristic: if includes slash, try to parse
-          if (dateStr && (dateStr.includes("/") || dateStr.includes("-"))) {
-             // Assuming DD-MM-YYYY or DD/MM/YYYY commonly used in India/UK
-             // If strictly YYYY-MM-DD, it works fine
-             const parts = dateStr.split(/[\/\-]/);
-             if (parts.length === 3) {
-                 // Check if first part looks like year
-                 if (parts[0].length === 4) {
-                     // YYYY-MM-DD - Keep as is
-                     dateStr = `${parts[0]}-${parts[1]}-${parts[2]}`;
-                 } else {
-                     // Assume DD-MM-YYYY -> YYYY-MM-DD
-                     // part[2] is year, part[1] is month, part[0] is day
-                     dateStr = `${parts[2]}-${parts[1]}-${parts[0]}`;
-                 }
-             }
+          
+          // Fix: Prioritize MM/DD/YYYY to match AdminDashboard logic
+          const formats = [
+              "MM/DD/YYYY", 
+              "M/D/YYYY", 
+              "MM-DD-YYYY", 
+              "M-D-YYYY", 
+              "YYYY-MM-DD", 
+              "DD/MM/YYYY", // Fallback
+              "DD-MM-YYYY"
+          ];
+          
+          let d = dayjs(dateStr, formats, true); 
+          if (!d.isValid()) {
+             d = dayjs(dateStr, formats, false);
+          }
+          
+          if (d.isValid()) {
+             dateStr = d.format("YYYY-MM-DD");
           }
 
           const numberOfPunchesStr = getField(row, ["No. of Punches", "Punches"]);

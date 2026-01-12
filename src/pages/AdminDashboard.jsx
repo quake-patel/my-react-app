@@ -2451,6 +2451,7 @@ export default function AdminDashboard() {
         currentUserEmail="chirag@theawakens.com"
         currentUserName="Admin (Chirag)"
         selectedMonth={selectedMonth}
+        darkMode={darkMode}
       />
     </ConfigProvider>
   );

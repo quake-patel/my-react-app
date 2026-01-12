@@ -148,88 +148,117 @@ export default function EmployeeDashboard() {
   const [holidays, setHolidays] = useState([]);
   const [holidayModalOpen, setHolidayModalOpen] = useState(false); // Added State
   const [adjustments, setAdjustments] = useState({}); // Stores adjustments for current month
+  const [incentives, setIncentives] = useState([]); // Added Incentives State
   const [employeeId, setEmployeeId] = useState(null);
+
+  /* ================= INCENTIVES ================= */
+  const fetchIncentives = async () => {
+    if (!employeeId) return;
+    try {
+        const q = query(collection(db, "Incentives"), where("employeeId", "==", employeeId));
+        const snap = await getDocs(q);
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setIncentives(data);
+    } catch (e) {
+        console.error("Failed to fetch incentives", e);
+    }
+  };
+
+  useEffect(() => {
+      if (employeeId) fetchIncentives();
+  }, [employeeId]); // Trigger when ID is ready
+
   const [form] = Form.useForm();
   const [uploading, setUploading] = useState(false);
   const navigate = useNavigate();
-  // ... existing code ...
+
+  // ... (handleFileUpload omitted for brevity - no changes) ...
 
   const handleFileUpload = (file) => {
-    setUploading(true);
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      transformHeader: (h) => h.trim(),
-      complete: async (results) => {
-        let successCount = 0;
-        for (let i = 0; i < results.data.length; i++) {
-          const row = results.data[i];
-          const employeeId = getField(row, ["Employee", "Employee ID"]);
-          const firstName = getField(row, ["First Name", "FirstName"]);
-          const department = getField(row, ["Department", "Dept"]);
-          
-          let date = getField(row, ["Date"]);
-          // Normalize Date for ID consistency (Admin Logic)
-          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
-          if (d.isValid()) {
-              date = d.format("YYYY-MM-DD");
-          }
+    // ... existing implementation ...
+     setUploading(true);
+     Papa.parse(file, {
+       header: true,
+       skipEmptyLines: true,
+       transformHeader: (h) => h.trim(),
+       complete: async (results) => {
+         let successCount = 0;
+         for (let i = 0; i < results.data.length; i++) {
+           const row = results.data[i];
+           const employeeId = getField(row, ["Employee", "Employee ID"]);
+           const firstName = getField(row, ["First Name", "FirstName"]);
+           const department = getField(row, ["Department", "Dept"]);
+           
+           let date = getField(row, ["Date"]);
+           // Normalize Date for ID consistency (Admin Logic)
+           // Fix: Prioritize MM/DD/YYYY
+           const formats = [
+               "MM/DD/YYYY", 
+               "M/D/YYYY", 
+               "MM-DD-YYYY", 
+               "M-D-YYYY", 
+               "YYYY-MM-DD", 
+               "DD/MM/YYYY", 
+               "DD-MM-YYYY"
+           ];
+           let d = dayjs(date, formats, true); // Strict Mode
+           if (!d.isValid()) {
+               d = dayjs(date, formats, false);
+           }
+           
+           if (d.isValid()) {
+               date = d.format("YYYY-MM-DD");
+           }
+ 
+           if (!employeeId || !date) continue; // Skip incomplete rows
+ 
+           const numberOfPunchesStr = getField(row, ["No. of Punches"]);
+           const numberOfPunches = numberOfPunchesStr ? parseInt(numberOfPunchesStr, 10) : 0;
+           const timeValue = getField(row, ["Time", "Times"]);
+           const punchTimes = parseTimes(timeValue, numberOfPunches);
+           const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
+           
+           // Unique ID for idempotency - SANITIZED
+           const safeEmpId = (employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+           const safeDate = (date || "").replace(/[^a-zA-Z0-9-]/g, "_");
+           const uniqueId = `${safeEmpId}_${safeDate}`;
+ 
+           const docData = {
+             employeeId: employeeId || "",
+             firstName: firstName || "",
+             email: firstName ? `${firstName.toLowerCase()}@theawakens.com` : "",
+             employee: firstName ? `${firstName} (${employeeId || "N/A"})` : employeeId || "Unknown",
+             department: department || "",
+             date: date || "",
+             numberOfPunches: punchTimes.length,
+             punchTimes,
+             inTime,
+             outTime,
+             hours: totalHours,
+             uploadedAt: new Date().toISOString(),
+           };
+ 
+           try {
+             // Use setDoc to overwrite/merge (Same as Admin)
+             await setDoc(doc(db, "punches", uniqueId), docData);
+             successCount++;
+           } catch (e) {
+             console.error(e);
+           }
+         }
+         setUploading(false);
+         fetchMyData(); // Refresh data immediately
+         message.success(`${successCount} rows processed successfully`);
+       },
+       error: (err) => {
+         console.error(err);
+         message.error("CSV parse error");
+         setUploading(false);
+       },
+     });
+     return false;
+   };
 
-          if (!employeeId || !date) continue; // Skip incomplete rows
-
-          const numberOfPunchesStr = getField(row, ["No. of Punches"]);
-          const numberOfPunches = numberOfPunchesStr ? parseInt(numberOfPunchesStr, 10) : 0;
-          const timeValue = getField(row, ["Time", "Times"]);
-          const punchTimes = parseTimes(timeValue, numberOfPunches);
-          const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
-          
-          // Unique ID for idempotency - SANITIZED
-          const safeEmpId = (employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
-          const safeDate = (date || "").replace(/[^a-zA-Z0-9-]/g, "_");
-          const uniqueId = `${safeEmpId}_${safeDate}`;
-
-          const docData = {
-            employeeId: employeeId || "",
-            firstName: firstName || "",
-            email: firstName ? `${firstName.toLowerCase()}@theawakens.com` : "",
-            employee: firstName ? `${firstName} (${employeeId || "N/A"})` : employeeId || "Unknown",
-            department: department || "",
-            date: date || "",
-            numberOfPunches: punchTimes.length,
-            punchTimes,
-            inTime,
-            outTime,
-            hours: totalHours,
-            uploadedAt: new Date().toISOString(),
-          };
-
-          // CRITICAL: Filter Removed as per User Request "upload all data of csv like in the admin dasboad"
-          try {
-            // Use setDoc to overwrite/merge (Same as Admin)
-            await setDoc(doc(db, "punches", uniqueId), docData);
-            successCount++;
-          } catch (e) {
-            console.error(e);
-          }
-        }
-        setUploading(false);
-        fetchMyData(); // Refresh data immediately
-        message.success(`${successCount} rows processed successfully`);
-      },
-      error: (err) => {
-        console.error(err);
-        message.error("CSV parse error");
-        setUploading(false);
-      },
-    });
-    return false;
-  };
-
-// ... in Render ...
-            {/* Upload Page Button REPLACED with Inline Upload (Same as Admin) */}
-            <Upload beforeUpload={handleFileUpload} showUploadList={false} accept=".csv">
-                <Button type="primary" icon={<UploadOutlined />} loading={uploading}>Upload CSV</Button>
-            </Upload>
   const screens = Grid.useBreakpoint();
   
   const [currentUserSalary, setCurrentUserSalary] = useState(30000); // Default
@@ -264,7 +293,8 @@ export default function EmployeeDashboard() {
         if (!snap.empty) {
             const data = snap.docs[0].data();
             if (data.salary) setCurrentUserSalary(Number(data.salary));
-            if (data.joiningDate) setJoiningDate(data.joiningDate); // Set Joining Date
+            if (data.joiningDate) setJoiningDate(data.joiningDate); 
+            if (data.employeeId) setEmployeeId(data.employeeId); // Set ID to trigger Incentives Fetch
         }
     } catch (err) {
         console.error("Error fetching salary:", err);
@@ -630,7 +660,8 @@ export default function EmployeeDashboard() {
     let payableSalary = monthlySalary - (unpaidDays * dailyRate);
     
     // Incentive
-    const incentiveAmount = incentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+    const monthlyIncentives = incentives.filter(inc => inc.month === selectedMonth.format("YYYY-MM"));
+    const incentiveAmount = monthlyIncentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
     payableSalary += incentiveAmount;
 
     if (presentDaysCount === 0 && paidLeavesCount === 0) {
@@ -755,7 +786,7 @@ export default function EmployeeDashboard() {
                         </div>
                         <div style={{ maxHeight: 200, overflowY: "auto" }}>
                             {payroll.shortDays.map(sd => (
-                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', color: darkMode ? '#fff' : 'inherit' }}>
                                     <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
                                     <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
                                 </div>
@@ -772,7 +803,7 @@ export default function EmployeeDashboard() {
                         </div>
                         <div style={{ maxHeight: 200, overflowY: "auto" }}>
                             {payroll.zeroDays.map(sd => (
-                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: darkMode ? '#fff' : 'inherit' }}>
                                     <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
                                     <Button type="primary" size="small" onClick={() => openRequestModal(sd.date, 'Missing Entry Correction')} style={{height: 22, fontSize: 11}}>Request</Button>
                                 </div>
@@ -789,7 +820,7 @@ export default function EmployeeDashboard() {
                         </div>
                         <div style={{ maxHeight: 200, overflowY: "auto" }}>
                             {payroll.missingDays.map(dateStr => (
-                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: darkMode ? '#fff' : 'inherit' }}>
                                     <span>{dateStr}</span>
                                 </div>
                             ))}
@@ -1232,7 +1263,8 @@ export default function EmployeeDashboard() {
         </div>
 
         {/* PAYROLL STATS - Collapsible? Or verify if needed. Keeping it for now as it doesn't conflict with screenshot request directly, but table is key. */}
-        {renderPayrollStats(payroll)}
+        {/* PAYROLL STATS - Collapsible? Or verify if needed. Keeping it for now as it doesn't conflict with screenshot request directly, but table is key. */}
+        {renderPayrollStats(payroll, darkMode)}
 
         {/* TABLE */}
         {dataSource.length === 0 ? (
@@ -1339,7 +1371,7 @@ export default function EmployeeDashboard() {
         onClose={() => setChatOpen(false)} 
         currentUserEmail={userEmail}
         currentUserName={currentUserName}
-        selectedMonth={selectedMonth}
+        darkMode={darkMode}
       />
       <Modal
         title={requestType}

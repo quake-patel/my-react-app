@@ -202,8 +202,23 @@ export default function SuperEmployeeDashboard() {
           const department = getField(row, ["Department", "Dept"]);
           
           let date = getField(row, ["Date"]);
-          // Normalize Date
-          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
+          
+          // Fix Date Parsing Priority: Prioritize MM/DD/YYYY for US formats
+          const formats = [
+              "MM/DD/YYYY", 
+              "M/D/YYYY", 
+              "MM-DD-YYYY", 
+              "M-D-YYYY", 
+              "YYYY-MM-DD", 
+              "DD/MM/YYYY", // Fallback
+              "DD-MM-YYYY"
+          ];
+          
+          let d = dayjs(date, formats, true); // Strict mode first
+          if (!d.isValid()) {
+             d = dayjs(date, formats, false); // Fallback to loose
+          }
+          
           if (d.isValid()) {
               date = d.format("YYYY-MM-DD");
           }
@@ -216,7 +231,7 @@ export default function SuperEmployeeDashboard() {
           const punchTimes = parseTimes(timeValue, numberOfPunches);
           const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
           
-          // Unique ID
+          // Unique ID for idempotency - SANITIZED to avoid path issues
           const safeEmpId = (employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
           const safeDate = (date || "").replace(/[^a-zA-Z0-9-]/g, "_");
           const uniqueId = `${safeEmpId}_${safeDate}`;
@@ -564,7 +579,7 @@ export default function SuperEmployeeDashboard() {
     let payableSalary = monthlySalary - (unpaidDays * dailyRate);
     
     // Incentive
-    const incentiveAmount = incentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+    const incentiveAmount = 0; // incentives not yet implemented in Super Dashboard
     payableSalary += incentiveAmount;
 
     if (presentDaysCount === 0 && paidLeavesCount === 0) {
@@ -1426,6 +1441,7 @@ export default function SuperEmployeeDashboard() {
         currentUserEmail={userEmail}
           currentUserName={currentUserName}
           selectedMonth={selectedMonth}
+          darkMode={darkMode}
         />
 
       {/* READ ONLY HOLIDAY MODAL */}

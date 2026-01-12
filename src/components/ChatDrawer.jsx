@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Drawer, List, Avatar, Input, Button, Badge, Typography, message, Tabs, Grid } from 'antd';
 import { SendOutlined, UserOutlined, SearchOutlined, MessageOutlined, TeamOutlined } from '@ant-design/icons';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, setDoc, orderBy, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, setDoc, orderBy, getDocs, limit } from 'firebase/firestore';
 import dayjs from 'dayjs';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
 
-const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selectedMonth }) => {
+const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, darkMode }) => {
   const screens = useBreakpoint();
   const drawerWidth = screens.xs ? "100%" : 400;
   const [activeTab, setActiveTab] = useState('chats'); // 'chats' or 'contacts'
@@ -26,6 +26,22 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
   const messagesEndRef = useRef(null);
 
   const myEmail = (currentUserEmail || '').toLowerCase(); // Normalize my email
+
+  // Theme Constants
+  const BG_COLOR = darkMode ? "#141414" : "#ffffff";
+  const TEXT_COLOR = darkMode ? "#ffffff" : "#000000";
+  const SUBTEXT_COLOR = darkMode ? "#a6a6a6" : "#999999";
+  const HOVER_BG = darkMode ? "#1f1f1f" : "#f5f5f5";
+  
+  const CHAT_BG = darkMode ? "#000000" : "#e5ddd5";
+  const INPUT_BG = darkMode ? "#1f1f1f" : "#f0f0f0";
+  
+  const MY_MSG_BG = darkMode ? "#056162" : "#dcf8c6"; // Darker green for dark mode
+  const MY_MSG_TEXT = darkMode ? "#fff" : "#000";
+  
+  const THEIR_MSG_BG = darkMode ? "#262d31" : "#fff";
+  const THEIR_MSG_TEXT = darkMode ? "#fff" : "#000";
+
 
   // Fetch Users (Contacts)
   useEffect(() => {
@@ -111,23 +127,18 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
       return () => unsubscribe();
   }, [open, myEmail, users]);
 
-  // Listen to Messages (Specific Conversation) - FILTER BY MONTH
+  // Listen to Messages (Specific Conversation) - LAST 50 MESSAGES
   useEffect(() => {
     if (!selectedUser || !myEmail) return;
 
     const emails = [myEmail, selectedUser.email.toLowerCase()].sort();
     const safeChatId = emails.join("_");
     
-    // Date Range for Selected Month (or default to current month if null, but dashboard usually provides one)
-    const currentMonth = selectedMonth ? dayjs(selectedMonth) : dayjs();
-    const startOfMonth = currentMonth.startOf('month').toDate();
-    const endOfMonth = currentMonth.endOf('month').toDate();
-
+    // Removed Date Filtering to ensure latest messages are always visible
     const q = query(
       collection(db, "chats", safeChatId, "messages"),
-      where("timestamp", ">=", startOfMonth),
-      where("timestamp", "<=", endOfMonth),
-      orderBy("timestamp", "asc")
+      orderBy("timestamp", "desc"), // Get newest first
+      limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -135,12 +146,13 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
         id: doc.id,
         ...doc.data()
       }));
-      setMessages(msgs);
+      // Reverse to show oldest first (Standard Chat UI)
+      setMessages(msgs.reverse());
       setTimeout(() => scrollToBottom(), 100);
     });
 
     return () => unsubscribe();
-  }, [selectedUser, myEmail, selectedMonth]);
+  }, [selectedUser, myEmail]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -183,8 +195,8 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
       if (selectedUser) {
           // CHAT WINDOW
           return (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div style={{ flex: 1, overflowY: 'auto', padding: 16, background: '#e5ddd5' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: CHAT_BG }}>
+                <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
                     {messages.map((msg) => {
                         const isMyMessage = (msg.sender || '').toLowerCase() === myEmail;
                         return (
@@ -200,13 +212,14 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
                                     maxWidth: '75%',
                                     padding: '8px 12px',
                                     borderRadius: 8,
-                                    background: isMyMessage ? '#dcf8c6' : '#fff',
+                                    background: isMyMessage ? MY_MSG_BG : THEIR_MSG_BG,
                                     boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                                    wordBreak: 'break-word'
+                                    wordBreak: 'break-word',
+                                    color: isMyMessage ? MY_MSG_TEXT : THEIR_MSG_TEXT
                                 }}>
                                     {!isMyMessage && <div style={{fontSize:10, color:'#e59235', marginBottom:2}}>{selectedUser.name}</div>}
-                                    <div style={{ fontSize: 14, color: '#000' }}>{msg.text}</div>
-                                    <div style={{ fontSize: 10, color: '#999', textAlign: 'right', marginTop: 4 }}>
+                                    <div style={{ fontSize: 14 }}>{msg.text}</div>
+                                    <div style={{ fontSize: 10, color: darkMode ? 'rgba(255,255,255,0.6)' : '#999', textAlign: 'right', marginTop: 4 }}>
                                         {msg.timestamp ? dayjs(msg.timestamp.toDate()).format('HH:mm') : '...'}
                                     </div>
                                 </div>
@@ -216,12 +229,13 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
                     <div ref={messagesEndRef} />
                 </div>
 
-                <div style={{ padding: 12, background: '#f0f0f0', display: 'flex', gap: 8 }}>
+                <div style={{ padding: 12, background: INPUT_BG, display: 'flex', gap: 8 }}>
                     <Input 
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
                         onPressEnter={handleSendMessage}
                         placeholder="Type a message..."
+                        style={darkMode ? { background: "#333", color: "#fff", borderColor: "#444" } : {}}
                     />
                     <Button type="primary" icon={<SendOutlined />} onClick={handleSendMessage} />
                 </div>
@@ -233,14 +247,14 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
       const items = activeTab === 'chats' ? activeChats : filteredUsers;
       
       return (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: BG_COLOR }}>
               <div style={{ padding: '0 12px' }}>
                 <Tabs 
                     activeKey={activeTab} 
                     onChange={setActiveTab}
                     items={[
-                        { key: 'chats', label: <span><MessageOutlined /> Chats</span> },
-                        { key: 'contacts', label: <span><TeamOutlined /> Contacts</span> }
+                        { key: 'chats', label: <span style={{color: TEXT_COLOR}}><MessageOutlined /> Chats</span> },
+                        { key: 'contacts', label: <span style={{color: TEXT_COLOR}}><TeamOutlined /> Contacts</span> }
                     ]}
                 />
               </div>
@@ -248,10 +262,11 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
               {activeTab === 'contacts' && (
                 <div style={{ padding: '0 12px 12px 12px' }}>
                     <Input 
-                        prefix={<SearchOutlined />} 
+                        prefix={<SearchOutlined style={{color: SUBTEXT_COLOR}} />} 
                         placeholder="Search people..." 
                         value={searchText}
                         onChange={(e) => setSearchText(e.target.value)}
+                        style={darkMode ? { background: "#333", color: "#fff", borderColor: "#444" } : {}}
                     />
                 </div>
               )}
@@ -260,7 +275,7 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
                   <List
                       itemLayout="horizontal"
                       dataSource={items}
-                      locale={{ emptyText: activeTab === 'chats' ? "No active conversations" : "No contacts found" }}
+                      locale={{ emptyText: <span style={{color: SUBTEXT_COLOR}}>{activeTab === 'chats' ? "No active conversations" : "No contacts found"}</span> }}
                       renderItem={item => {
                           // If Chats tab, item is { otherEmail, otherName, lastMessage ... }
                           // If Contacts tab, item is { email, name, avatar }
@@ -275,24 +290,24 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
                           return (
                             <List.Item 
                                 onClick={() => setSelectedUser(userObj)}
-                                style={{ cursor: 'pointer', padding: '12px 16px', transition: 'background 0.3s' }}
+                                style={{ cursor: 'pointer', padding: '12px 16px', transition: 'background 0.3s', borderBottom: darkMode ? '1px solid #303030' : '1px solid #f0f0f0' }}
                                 className="chat-user-item"
-                                onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
-                                onMouseLeave={(e) => e.currentTarget.style.background = 'white'}
+                                onMouseEnter={(e) => e.currentTarget.style.background = HOVER_BG}
+                                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                             >
                                 <List.Item.Meta
                                 avatar={<Avatar icon={<UserOutlined />} src={isChat ? item.otherAvatar : item.avatar} style={{ backgroundColor: isChat ? '#1890ff' : '#87d068' }} />}
                                 title={
                                     <div style={{display:'flex', justifyContent:'space-between'}}>
-                                        <Text strong>{name}</Text>
+                                        <Text strong style={{color: TEXT_COLOR}}>{name}</Text>
                                         {isChat && item.timestamp && (
-                                            <Text type="secondary" style={{fontSize:10}}>
+                                            <Text type="secondary" style={{fontSize:10, color: SUBTEXT_COLOR}}>
                                                 {dayjs(item.timestamp.toDate()).format('D MMM')}
                                             </Text>
                                         )}
                                     </div>
                                 }
-                                description={<Text type="secondary" style={{ fontSize: 12 }} ellipsis>{subtitle}</Text>}
+                                description={<Text type="secondary" style={{ fontSize: 12, color: SUBTEXT_COLOR }} ellipsis>{subtitle}</Text>}
                                 />
                             </List.Item>
                           );
@@ -311,7 +326,15 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
       open={open}
       width={drawerWidth}
       extra={selectedUser && <Button type="link" onClick={() => setSelectedUser(null)}>Back</Button>}
-      styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
+      styles={{ 
+          body: { padding: 0, display: 'flex', flexDirection: 'column', background: BG_COLOR },
+          header: { background: BG_COLOR, color: TEXT_COLOR, borderBottom: `1px solid ${darkMode ? '#303030' : '#f0f0f0'}` },
+          content: { background: BG_COLOR }
+      }}
+      drawerStyle={{ background: BG_COLOR }}
+      bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column', background: BG_COLOR }}
+      headerStyle={{ background: BG_COLOR, color: TEXT_COLOR, borderBottom: `1px solid ${darkMode ? '#303030' : '#f0f0f0'}` }}
+      contentWrapperStyle={{ background: BG_COLOR }}
     >
         {renderContent()}
     </Drawer>
