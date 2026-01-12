@@ -882,6 +882,38 @@ export default function AdminDashboard() {
     // --- SALARY CALCULATION (Admin Specific) ---
     // const employeeId = employeeRecords[0]?.employeeId; (Already defined above)
     const monthlySalary = (employeeId && salaries[employeeId]) ? Number(salaries[employeeId]) : 30000;    // We iterate through monthlyRecords to calculate earned days
+    // --- GLOBAL HOURS BALANCING (User Request: Use Surplus to Fill Short Days) ---
+    // 1. Calculate Credit Bank (Surplus Hours)
+    let creditBank = 0;
+    monthlyRecords.forEach(r => {
+        let dailyHours = 0;
+        if (r.punchTimes && r.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(r.punchTimes);
+            if (totalHours) {
+                 const [h, m] = totalHours.split(":").map(Number);
+                 dailyHours = h + (m/60);
+            }
+        } else if (r.hours) {
+           const [h, m] = r.hours.split(":").map(Number);
+           dailyHours = h + (m/60);
+        }
+
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
+        const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+        const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
+
+        if (isWeekend || isHoliday) {
+            // All hours on weekends/holidays are surplus since Target is 0 for these days
+            creditBank += dailyHours;
+        } else {
+            // For weekdays, anything above 8 is surplus
+            if (dailyHours > 8) {
+                creditBank += (dailyHours - 8);
+            }
+        }
+    });
+
+    // 2. Calculate Earned Days utilizing the Bank
     let earnedDays = 0;
     let presentDaysCount = 0;
     
@@ -910,11 +942,7 @@ export default function AdminDashboard() {
         const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
         let hoursForPay = dailyHours;
-        // if (isWeekend && !r.weekendApproved) hoursForPay = 0;
         
-        // Earned Days Calculation
-        // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded 
-        // to prevent 0-hour or half-day records from penalizing the "Paid Off" benefit.
         let earned = 0;
         let boosted = 0;
 
@@ -926,10 +954,17 @@ export default function AdminDashboard() {
                 earned = 1;
                 boosted = 1;
             } else if (hoursForPay >= 3) {
-                earned = 0.5;
-                // Boost Logic: If High Hours (Overtime), we normally boost Short Days (3-8h) to Full Days.
-                // EXCEPTION: If it is a MANUAL entry (e.g. "Mark as Half Day"), we respect the users decision 
-                // and keep it as 0.5 regardless of total hours.
+                // Short Day Logic (3h - 8h)
+                const deficit = 8 - hoursForPay;
+                // Try to cover with Bank
+                // Use epsilon for float comparison safety
+                if (creditBank >= deficit - 0.001) {
+                    earned = 1; // BOOSTED to Full Day
+                    creditBank -= deficit; // Consume surplus
+                } else {
+                    earned = 0.5; // Short Day Penalty
+                }
+                
                 if (r.isManualEntry) {
                     boosted = 0.5;
                 } else {
@@ -1191,7 +1226,8 @@ export default function AdminDashboard() {
       // Net Earning Days Logic
       // Updated to match Employee/SuperEmployee Logic: Use Calculated Days for Pay
       netEarningDays: daysForPay,
-      daysInMonth: selectedMonth.daysInMonth()
+      daysInMonth: selectedMonth.daysInMonth(),
+      creditBank // DEBUG
     };
   };
 
@@ -1617,8 +1653,8 @@ export default function AdminDashboard() {
                   <Statistic 
                     title="Net Earned" 
                     value={payroll.netEarningDays} 
-                    suffix={`/ ${payroll.daysInMonth}`}
-                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
+                    suffix={`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: payroll.netEarningDays < payroll.daysInMonth ? "#cf1322" : "#3f8600" }} 
                   />
               </Col>
               <Col xs={12} sm={3}>

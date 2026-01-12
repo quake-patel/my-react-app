@@ -349,6 +349,35 @@ export default function SuperEmployeeDashboard() {
 
     const currentMonthAdj = adjustments[selectedMonth.format("YYYY-MM")] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
     
+    // --- GLOBAL HOURS BALANCING (User Request: Use Surplus to Fill Short Days) ---
+    // 1. Calculate Credit Bank (Surplus Hours)
+    let creditBank = 0;
+    monthlyRecords.forEach(r => {
+        let dailyHours = 0;
+        if (r.punchTimes && r.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(r.punchTimes);
+            if (totalHours) {
+                 const [h, m] = totalHours.split(":").map(Number);
+                 dailyHours = h + (m/60);
+            }
+        } else if (r.hours) {
+           const [h, m] = r.hours.split(":").map(Number);
+           dailyHours = h + (m/60);
+        }
+
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
+        const isWeekend = d.day() === 0 || d.day() === 6;
+        const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
+
+        if (isWeekend || isHoliday) {
+            creditBank += dailyHours;
+        } else {
+            if (dailyHours > 8) {
+                creditBank += (dailyHours - 8);
+            }
+        }
+    });
+
     monthlyRecords.forEach(r => {
       let dailyHours = 0;
       if (r.punchTimes && r.punchTimes.length > 0) {
@@ -419,7 +448,16 @@ export default function SuperEmployeeDashboard() {
               if (hoursForPay >= 8) {
                   earned = 1;
               } else if (hoursForPay >= 3) {
-                  earned = 0.5;
+                  // Short Day Logic (3h - 8h)
+                  const deficit = 8 - hoursForPay;
+                  // Try to cover with Bank
+                  // Use epsilon for float comparison safety
+                  if (creditBank >= deficit - 0.001) {
+                      earned = 1; // BOOSTED to Full Day
+                      creditBank -= deficit; // Consume surplus
+                  } else {
+                      earned = 0.5; // Short Day Penalty
+                  }
               }
           }
           earnedDays += earned;
@@ -432,7 +470,9 @@ export default function SuperEmployeeDashboard() {
 
     // Rule: Overtime CAP.
     // Earned Days cannot exceed Present Days count.
-    earnedDays = Math.min(earnedDays, presentDaysCount);
+    // Rule: Overtime CAP.
+    // Earned Days cannot exceed Present Days count.
+    // effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount); // DISABLED to match Admin Strict Logic
 
     // Calculate Missing Days (Absences)
     const missingDays = [];

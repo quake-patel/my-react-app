@@ -391,6 +391,35 @@ export default function EmployeeDashboard() {
 
     const currentMonthAdj = adjustments[selectedMonth.format("YYYY-MM")] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
  
+    // --- GLOBAL HOURS BALANCING (User Request: Use Surplus to Fill Short Days) ---
+    // 1. Calculate Credit Bank (Surplus Hours)
+    let creditBank = 0;
+    monthlyRecords.forEach(r => {
+        let dailyHours = 0;
+        if (r.punchTimes && r.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(r.punchTimes);
+            if (totalHours) {
+                 const [h, m] = totalHours.split(":").map(Number);
+                 dailyHours = h + (m/60);
+            }
+        } else if (r.hours) {
+           const [h, m] = r.hours.split(":").map(Number);
+           dailyHours = h + (m/60);
+        }
+
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
+        const isWeekend = d.day() === 0 || d.day() === 6;
+        const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
+
+        if (isWeekend || isHoliday) {
+            creditBank += dailyHours;
+        } else {
+            if (dailyHours > 8) {
+                creditBank += (dailyHours - 8);
+            }
+        }
+    });
+
     monthlyRecords.forEach(r => {
       let dailyHours = 0;
       // Calculate from Punch Times if available
@@ -443,21 +472,6 @@ export default function EmployeeDashboard() {
           
           // Short Days Logic
           // isGranted is already calculated above
-          if (isGranted && dailyHours < 8 && !r.isLeave) {
-             // Already handled above for calculation, but we verify here for the list
-             // Actually, if we adjusted dailyHours to 8 above, this condition (dailyHours < 8) might FAIL now?
-             // YES. If we set dailyHours = 8, then dailyHours < 8 is false.
-             // So it won't be pushed to shortDays. This is DESIRED behavior.
-             // But we need to make sure we don't push it.
-             // So current logic: `if (isWeekend... && dailyHours < 8 ...)`
-             // Since dailyHours is now 8, it won't be pushed.
-             // So existing logic is mostly fine, just need to remove the re-declaration and the filtering check inside the if?
-             // Wait. Previous logic was: `if (... && !isGranted)`.
-             // Now `dailyHours` is 8. So `dailyHours < 8` is FALSE.
-             // So it naturally falls out.
-             // We can just revert the specific lines that check `!isGranted` back to normal logic, OR leaves it as is.
-             // Let's just remove the re-declaration line.
-          }
           
           if (!isWeekend && !r.isLeave && dailyHours < 8) {
               const normalizedDate = d.format("YYYY-MM-DD");
@@ -486,7 +500,16 @@ export default function EmployeeDashboard() {
                       earned = 1;
                       boosted = 1;
                   } else if (hoursForPay >= 3) {
-                      earned = 0.5;
+                      // Short Day Logic (3h - 8h)
+                      const deficit = 8 - hoursForPay;
+                      // Try to cover with Bank
+                      // Use epsilon for float comparison safety
+                      if (creditBank >= deficit - 0.001) {
+                          earned = 1; // BOOSTED to Full Day
+                          creditBank -= deficit; // Consume surplus
+                      } else {
+                          earned = 0.5; // Short Day Penalty
+                      }
                       
                       if (r.isManualEntry) {
                         boosted = 0.5;
@@ -506,7 +529,9 @@ export default function EmployeeDashboard() {
 
     // Rule: Overtime CAP.
     // Earned Days cannot exceed Present Days count.
-    earnedDays = Math.min(earnedDays, presentDaysCount);
+    // Rule: Overtime CAP.
+    // Earned Days cannot exceed Present Days count.
+    // effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount); // DISABLED to match Admin Strict Logic
     
     // Calculate Missing Days (Absences)
     const missingDays = [];
