@@ -145,7 +145,9 @@ export default function SuperEmployeeDashboard() {
     }
   };
   
-      useEffect(() => {
+  const [joiningDate, setJoiningDate] = useState(null); // Added Joining Date
+
+    useEffect(() => {
         const fetchEmpId = async () => {
             if (!userEmail) return;
             const q = query(collection(db, "employees"), where("email", "==", userEmail));
@@ -155,6 +157,7 @@ export default function SuperEmployeeDashboard() {
                 setEmployeeId(empData.employeeId);
                 setCurrentUserName(empData.firstName ? `${empData.firstName} ${empData.lastName || ''}` : empData.employee);
                 if (empData.salary) setCurrentUserSalary(Number(empData.salary));
+                if (empData.joiningDate) setJoiningDate(empData.joiningDate); // Set Joining Date
             }
         };
         fetchEmpId();
@@ -200,7 +203,7 @@ export default function SuperEmployeeDashboard() {
           
           let date = getField(row, ["Date"]);
           // Normalize Date
-          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
           if (d.isValid()) {
               date = d.format("YYYY-MM-DD");
           }
@@ -255,17 +258,26 @@ export default function SuperEmployeeDashboard() {
   };
 
   /* ================= PAYROLL CALCULATIONS ================= */
-  const calculateWorkingDays = (monthDayjs) => {
+  const calculateWorkingDays = (monthDayjs, joiningDate = null) => {
     if (!monthDayjs) return 0;
     const start = monthDayjs.clone().startOf("month");
     const end = monthDayjs.clone().endOf("month");
     
+    // Adjust start date if joining date is in this month
+    let actualStart = start;
+    if (joiningDate) {
+        const jDate = dayjs(joiningDate);
+        if (jDate.isValid() && jDate.isSame(monthDayjs, 'month')) {
+            actualStart = jDate;
+        }
+    }
+
     let workingDays = 0;
     const holidayDates = holidays.map(h => h.date);
     // Add defaults
     DEFAULT_HOLIDAYS.forEach(d => { if(!holidayDates.includes(d)) holidayDates.push(d) });
     
-    let curr = start.clone();
+    let curr = actualStart.clone();
     while (curr.isSameOrBefore(end)) {
       const day = curr.day(); // 0 = Sun, 6 = Sat
       const isWeekend = day === 0 || day === 6;
@@ -290,7 +302,7 @@ export default function SuperEmployeeDashboard() {
     // Filter records for selected month
     const rawMonthlyRecords = employeeRecords.filter(r => {
         if (!r.date) return false;
-        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
         return d.isValid() && d.isSame(selectedMonth, 'month');
     });
 
@@ -337,7 +349,7 @@ export default function SuperEmployeeDashboard() {
       }
       actualHours += dailyHours;
       
-      const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+      const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
 
       // Apply Granted Shortage (Virtual)
       const isGranted = (currentMonthAdj.grantedShortageDates || []).includes(r.date);
@@ -412,7 +424,17 @@ export default function SuperEmployeeDashboard() {
     const start = selectedMonth.clone().startOf("month");
     const end = selectedMonth.clone().endOf("month");
     
-    let curr = start.clone();
+    // JOINING DATE LOGIC START
+    let actualStart = start;
+    if (joiningDate) {
+        const jDate = dayjs(joiningDate);
+        if (jDate.isValid() && jDate.isSame(selectedMonth, 'month')) {
+            actualStart = jDate;
+        }
+    }
+    // JOINING DATE LOGIC END
+
+    let curr = actualStart.clone();
     let passedWorkingDays = 0;
  // NEW
 
@@ -422,8 +444,6 @@ export default function SuperEmployeeDashboard() {
         const isWeekend = day === 0 || day === 6;
         const isHoliday = holidayDates.includes(dayStr);
         const isFuture = curr.isAfter(today, 'day');
-        
-
         
         // Count Passed Working Days
         if (!isWeekend && !isHoliday && !isFuture) {
@@ -441,7 +461,7 @@ export default function SuperEmployeeDashboard() {
     missingDays.sort();
 
     // Calculate Target
-    const workingDays = calculateWorkingDays(selectedMonth);
+    const workingDays = calculateWorkingDays(selectedMonth, joiningDate); // Pass joiningDate
     const targetHours = workingDays * 8;
     const passedTargetHours = passedWorkingDays * 8;
     
@@ -514,21 +534,11 @@ export default function SuperEmployeeDashboard() {
     
     // Fix for "High Hours but Low Days"
     let effectivelyEarnedDays = earnedDays;
-    if (eligibleHours >= targetHours && workingDays > 0) {
-        effectivelyEarnedDays = boostedDays;
-    } else {
-        // HOURS-BASED FALLBACK
-        const shortage = Math.max(0, targetHours - eligibleHours);
-        const shortageDays = shortage / 8;
-        const hoursBasedDays = Math.max(0, workingDays - shortageDays);
-        
-        // Round to nearest 0.5
-        const snappedDays = Math.floor(hoursBasedDays * 2) / 2;
-
-        if (snappedDays > effectivelyEarnedDays) {
-            effectivelyEarnedDays = snappedDays;
-        }
-    }
+    
+    // STRICT LOGIC RESTORED:
+    // 1 Full Day = 1.0
+    // 1 Half Day = 0.5
+    // No boosting. Discrepancy is handled by straight sum.
 
     // Rule: Overtime CAP.
     effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount);
@@ -542,33 +552,26 @@ export default function SuperEmployeeDashboard() {
     // APPLY GRANTED LEAVES (User Adjustment)
     daysForPay += paidLeavesCount;
 
-    // Calculate Billable Days
-    const billableDays = selectedMonth.daysInMonth();
-    
-    // Final Salary Capping
-    const actualAbsencesCount = missingDays.length + zeroDays.length;
-    let unpaidLeavesForDeduction = (missingDays.length + zeroDays.length + leavesCount) - paidLeavesCount;
-    
-    if (eligibleHours >= targetHours && workingDays > 0) {
-        unpaidLeavesForDeduction = (actualAbsencesCount + leavesCount) - paidLeavesCount;
-    }
-    
-    const maxPayableDays = billableDays - Math.max(0, unpaidLeavesForDeduction);
-    daysForPay = Math.min(daysForPay, maxPayableDays);
-    
-    // Final Safe Cap
-    daysForPay = Math.min(daysForPay, billableDays);
-    if (daysForPay < 0) daysForPay = 0;
-
-    // GUARD: If NO work has been done, force Net Earned to 0.
-    if (presentDaysCount === 0) {
-        daysForPay = 0;
-    }
-
-    // --- SALARY CALCULATION ---
+    // Calculate Billable Days (Denominator)
+    const fixedDaysBasis = 30;
     const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
-    const dailyRate = billableDays > 0 ? monthlySalary / billableDays : 0;
-    const payableSalary = (daysForPay * dailyRate);
+    const dailyRate = monthlySalary / fixedDaysBasis;
+    
+    const totalDaysInMonth = selectedMonth.daysInMonth();
+    let unpaidDays = totalDaysInMonth - daysForPay;
+    if (unpaidDays < 0) unpaidDays = 0;
+    
+    let payableSalary = monthlySalary - (unpaidDays * dailyRate);
+    
+    // Incentive
+    const incentiveAmount = incentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+    payableSalary += incentiveAmount;
+
+    if (presentDaysCount === 0 && paidLeavesCount === 0) {
+        payableSalary = 0 + incentiveAmount;
+    }
+    
+    if (payableSalary < 0) payableSalary = 0;
 
     return {
       workingDays,
@@ -598,17 +601,23 @@ export default function SuperEmployeeDashboard() {
     };
   };
 
+  /* ================= FETCH DATA ================= */
   const fetchMyData = React.useCallback(async () => {
     setLoading(true);
     try {
+      const startOfMonth = selectedMonth.startOf('month').format('YYYY-MM-DD');
+      const endOfMonth = selectedMonth.endOf('month').format('YYYY-MM-DD');
+
       const q = query(
         collection(db, "punches"),
-        where("email", "==", userEmail)
+        where("email", "==", userEmail),
+        where("date", ">=", startOfMonth),
+        where("date", "<=", endOfMonth)
       );
       const snap = await getDocs(q);
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       
-      // Sort Descending (Latest Date First) -> Actually we sort in dataSource now, but original data sort is okay too
+      // Sort Descending
       data.sort((a, b) => {
         const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
         const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
@@ -622,14 +631,13 @@ export default function SuperEmployeeDashboard() {
       message.error("Failed to fetch data");
     }
     setLoading(false);
-  }, [userEmail]);
+  }, [userEmail, selectedMonth]); // Added selectedMonth dependency
 
   const fetchRequests = React.useCallback(async () => {
     try {
       const snap = await getDocs(collection(db, "requests"));
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       
-      // Sort Requests Descending (Latest Date First)
       data.sort((a, b) => {
         const dateA = dayjs(a.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
         const dateB = dayjs(b.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
@@ -638,6 +646,9 @@ export default function SuperEmployeeDashboard() {
         return dateB.valueOf() - dateA.valueOf();
       });
 
+      // Filter requests by user? The original code didn't seems to filter requests by user, 
+      // but logic suggests we should. However, sticking to optimization:
+      // Assuming 'requests' collection is small or irrelevant to the Quota issue compared to punches.
       setRequests(data);
     } catch {
       console.error("Failed to fetch requests");
@@ -650,7 +661,7 @@ export default function SuperEmployeeDashboard() {
       fetchRequests();
       fetchHolidays();
     }
-  }, [userEmail, fetchMyData, fetchRequests]);
+  }, [userEmail, fetchMyData, fetchRequests]); // fetchMyData now depends on selectedMonth, so this triggers on month change
 
   // Render helper to avoid duplication
   const renderPayrollStats = (payroll, darkMode) => (
@@ -1053,7 +1064,7 @@ export default function SuperEmployeeDashboard() {
   };
 
   /* ================= COMPUTED DATA ================= */
-  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays]);
+  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate]);
   
 
   const dataSource = React.useMemo(() => {

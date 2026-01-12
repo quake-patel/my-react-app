@@ -170,7 +170,7 @@ export default function EmployeeDashboard() {
           
           let date = getField(row, ["Date"]);
           // Normalize Date for ID consistency (Admin Logic)
-          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+          const d = dayjs(date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
           if (d.isValid()) {
               date = d.format("YYYY-MM-DD");
           }
@@ -235,6 +235,8 @@ export default function EmployeeDashboard() {
   const [currentUserSalary, setCurrentUserSalary] = useState(30000); // Default
   const [currentUserName, setCurrentUserName] = useState("");
 
+  const [joiningDate, setJoiningDate] = useState(null); // Added Joining Date
+
   /* ================= AUTH ================= */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -262,6 +264,7 @@ export default function EmployeeDashboard() {
         if (!snap.empty) {
             const data = snap.docs[0].data();
             if (data.salary) setCurrentUserSalary(Number(data.salary));
+            if (data.joiningDate) setJoiningDate(data.joiningDate); // Set Joining Date
         }
     } catch (err) {
         console.error("Error fetching salary:", err);
@@ -280,17 +283,26 @@ export default function EmployeeDashboard() {
   };
 
   /* ================= PAYROLL CALCULATIONS ================= */
-  const calculateWorkingDays = (monthDayjs) => {
+  const calculateWorkingDays = (monthDayjs, joiningDate = null) => {
     if (!monthDayjs) return 0;
     const start = monthDayjs.clone().startOf("month");
     const end = monthDayjs.clone().endOf("month");
     
+    // Adjust start date if joining date is in this month
+    let actualStart = start;
+    if (joiningDate) {
+        const jDate = dayjs(joiningDate);
+        if (jDate.isValid() && jDate.isSame(monthDayjs, 'month')) {
+            actualStart = jDate;
+        }
+    }
+
     let workingDays = 0;
     const holidayDates = holidays.map(h => h.date);
     // Add defaults
     DEFAULT_HOLIDAYS.forEach(d => { if(!holidayDates.includes(d)) holidayDates.push(d) });
     
-    let curr = start.clone();
+    let curr = actualStart.clone();
     while (curr.isSameOrBefore(end)) {
       const day = curr.day(); // 0 = Sun, 6 = Sat
       const isWeekend = day === 0 || day === 6;
@@ -317,7 +329,7 @@ export default function EmployeeDashboard() {
     // Filter records for selected month
     const rawMonthlyRecords = employeeRecords.filter(r => {
         if (!r.date) return false;
-        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
         return d.isValid() && d.isSame(selectedMonth, 'month');
     });
 
@@ -365,7 +377,7 @@ export default function EmployeeDashboard() {
       }
       actualHours += dailyHours;
       
-          const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+          const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
       if(d.isValid()) {
           recordedDates.push(d.format("YYYY-MM-DD"));
 
@@ -471,7 +483,17 @@ export default function EmployeeDashboard() {
     const start = selectedMonth.clone().startOf("month");
     const end = selectedMonth.clone().endOf("month");
     
-    let curr = start.clone();
+    // JOINING DATE LOGIC START
+    let actualStart = start;
+    if (joiningDate) {
+        const jDate = dayjs(joiningDate);
+        if (jDate.isValid() && jDate.isSame(selectedMonth, 'month')) {
+            actualStart = jDate;
+        }
+    }
+    // JOINING DATE LOGIC END
+
+    let curr = actualStart.clone();
     let passedWorkingDays = 0;
 
     while (curr.isSameOrBefore(end)) {
@@ -500,7 +522,7 @@ export default function EmployeeDashboard() {
     missingDays.sort();
 
     // Calculate Target
-    const workingDays = calculateWorkingDays(selectedMonth);
+    const workingDays = calculateWorkingDays(selectedMonth, joiningDate);
     const targetHours = workingDays * 8;
     const passedTargetHours = passedWorkingDays * 8;
     
@@ -577,24 +599,11 @@ export default function EmployeeDashboard() {
     
     // Fix for "High Hours but Low Days"
     let effectivelyEarnedDays = earnedDays;
-    if (eligibleHours >= targetHours && workingDays > 0) {
-        effectivelyEarnedDays = boostedDays;
-    } else {
-        // HOURS-BASED FALLBACK
-        const shortage = Math.max(0, targetHours - eligibleHours);
-        const shortageDays = shortage / 8;
-        const hoursBasedDays = Math.max(0, workingDays - shortageDays);
-        
-        // Round to nearest 0.5
-        const snappedDays = Math.floor(hoursBasedDays * 2) / 2;
 
-        if (snappedDays > effectivelyEarnedDays) {
-            effectivelyEarnedDays = snappedDays;
-        }
-    }
-
-    // Rule: Overtime CAP.
-    effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount);
+    // STRICT LOGIC RESTORED:
+    // 1 Full Day = 1.0
+    // 1 Half Day = 0.5
+    // No boosting. Discrepancy is handled by straight sum.
 
     // New Formula: (Present Days + Unworked Weekends + Unworked Holidays)
     let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount;
@@ -603,47 +612,32 @@ export default function EmployeeDashboard() {
     daysForPay -= sandwichDeduction;
 
     // APPLY GRANTED LEAVES (User Adjustment)
-    daysForPay += paidLeavesCount;
-
-    // Calculate Billable Days
-    const billableDays = selectedMonth.daysInMonth();
-    
-    // Final Salary Capping
-    const actualAbsencesCount = missingDays.length + zeroDays.length;
-    let unpaidLeavesForDeduction = (missingDays.length + zeroDays.length + leavesCount) - paidLeavesCount;
-    
-    if (eligibleHours >= targetHours && workingDays > 0) {
-        unpaidLeavesForDeduction = (actualAbsencesCount + leavesCount) - paidLeavesCount;
-    }
-    
-    const maxPayableDays = billableDays - Math.max(0, unpaidLeavesForDeduction);
-    daysForPay = Math.min(daysForPay, maxPayableDays);
-    
-    // Final Safe Cap
-    daysForPay = Math.min(daysForPay, billableDays);
-    if (daysForPay < 0) daysForPay = 0;
-
-    // Final Safe Cap
-    daysForPay = Math.min(daysForPay, billableDays);
-    if (daysForPay < 0) daysForPay = 0;
-
-    // GUARD: If NO work has been done (Start of month or fully absent), force Net Earned to 0.
-    if (presentDaysCount === 0) {
-        daysForPay = 0;
-    }
+    // ADJUST FOR SANDWICH
+    // daysForPay -= sandwichDeduction; (Already done above)
 
     // --- SALARY CALCULATION ---
     // If we have a stored salary for this user, use it. Otherwise default to 30000
-    // We need to access the 'salary' state which we will check/add in the main component.
-    // For now assuming we pass it or fallback.
     const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
-
-    const dailyRate = billableDays > 0 ? monthlySalary / billableDays : 0;
     
-    // Incentive Calculation (Stub or passed prop)
-    const incentiveAmount = 0; // Incentives usually need Admin permissions to view/map. We can add later.
+    // Calculate Billable Days (Denominator)
+    const fixedDaysBasis = 30;
+    const dailyRate = monthlySalary / fixedDaysBasis;
+    
+    const totalDaysInMonth = selectedMonth.daysInMonth();
+    let unpaidDays = totalDaysInMonth - daysForPay;
+    if (unpaidDays < 0) unpaidDays = 0;
+    
+    let payableSalary = monthlySalary - (unpaidDays * dailyRate);
+    
+    // Incentive
+    const incentiveAmount = incentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
+    payableSalary += incentiveAmount;
 
-    const payableSalary = (daysForPay * dailyRate) + incentiveAmount;
+    if (presentDaysCount === 0 && paidLeavesCount === 0) {
+        payableSalary = 0 + incentiveAmount;
+    }
+    
+    if (payableSalary < 0) payableSalary = 0;
 
     return {
       workingDays,
@@ -957,7 +951,7 @@ export default function EmployeeDashboard() {
     setEditOpen(false);
   };
 
-  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays]);
+  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate]);
   
   
   /* ================= HELPERS (New) ================= */

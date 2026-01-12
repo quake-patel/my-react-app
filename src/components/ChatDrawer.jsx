@@ -30,6 +30,7 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
   // Fetch Users (Contacts)
   useEffect(() => {
     if (!open) return;
+    if (users.length > 0) return; // OPTIMIZATION: Use cached users if available
     
     const fetchUsers = async () => {
       try {
@@ -68,7 +69,7 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, selected
     };
     
     fetchUsers();
-  }, [open, myEmail]);
+  }, [open, myEmail, users.length]);
 
   // Filter Users
   useEffect(() => {
