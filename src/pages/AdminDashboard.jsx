@@ -1096,103 +1096,22 @@ export default function AdminDashboard() {
     daysForPay += paidLeavesCount;
 
     // Calculate Billable Days (Denominator)
-    // User Request: Fixed 30 days basis for "Daily Rate".
-    // Logic: Pay = Salary - (UnpaidDays * (Salary / 30))
-    // This ensures that:
-    // 1. Full Month Work (whether 28, 30, or 31 days) = Full Salary.
-    // 2. 0.5 Day Absence = Exactly 500rs deduction (if 30k salary).
+    const daysInCurrentMonth = selectedMonth.daysInMonth();
+    // const monthlySalary already defined above
+    const dailyRate = monthlySalary / daysInCurrentMonth;
     
-    const fixedDaysBasis = 30;
-    const dailyRate = monthlySalary / fixedDaysBasis;
+    // User Request: Calculate strictly based on Net Earned Days
+    // Formula: Net Earned * Daily Rate (Dynamic Basis)
+    let payableSalary = daysForPay * dailyRate;
     
-    // Total Expected Days = Days In Month
-    const totalDaysInMonth = selectedMonth.daysInMonth();
-    
-    // Unpaid Days = Total Days - Earned Days (incl weekends/holidays)
-    // Note: daysForPay already includes (Present + Wknd + Hol), so it sums to TotalDays if fully present.
-    let unpaidDays = totalDaysInMonth - daysForPay;
-    
-    // Safety clamp
-    if (unpaidDays < 0) unpaidDays = 0; 
-    
-    // Final Salary Calculation
-    let payableSalary = monthlySalary - (unpaidDays * dailyRate);
-    
-    // Incentive is ADDED on top? Or part of it? 
-    // Usually incentives are added ON TOP of base salary.
-    // Logic: (Base - Deductions) + Incentives
+    // Incentive is ADDED on top
     payableSalary += incentiveAmount;
 
     // Safety check: Cannot be negative
     if (payableSalary < 0) payableSalary = 0;
 
-    // GUARD: If NO work has been done (and not on paid leave), and no incentives?
-    // Actually, if presentDaysCount === 0 and totalLeaves > 0...
-    // The unpaidDays logic handles it. If I worked 0 days, earnedDays=0. 
-    // unpaidDays = 30 (in 30 day month). Pay = 30000 - 30000 = 0.
-    // But if month is 31 days. unpaidDays = 31.
-    // Pay = 30000 - (31 * 1000) = -1000.  -> Clamped to 0.
-    // If month is 28 days. unpaidDays = 28.
-    // Pay = 30000 - (28 * 1000) = 2000. 
-    // WAIT. If I work 0 days in Feb, I shouldn't get 2000.
-    // Issue with Deduction Logic on short months.
-    
-    // Hybrid Fix:
-    // If daysForPay < totalDaysInMonth, we use deduction.
-    // BUT if daysForPay is very low (e.g. 0), we shouldn't profit from short month math.
-    
-    // Standard HR Practice:
-    // If WorkedDays > 0 : Pay = Salary - (LOP * Rate)
-    // If WorkedDays == 0 (and no paid leave) : Pay = 0?
-    // Let's rely on presentDaysCount.
-    
     if (presentDaysCount === 0 && paidLeavesCount === 0) {
         payableSalary = 0 + incentiveAmount; // Just incentives if any
-    } else {
-        // If the calculated deduction leads to negative, it is 0.
-        // If calculating strictly by earned days for short month?
-        // Let's stick to the User's specific request "half day then 29500".
-        // This validates the deduction logic strongly.
-        // We accept the "Short Month Paradox" (getting paid small amount if absent all month) 
-        // OR we switch to Pro-Rata if absent days are high?
-        // Let's stick to simple Deduction for now as usually employees are mostly present.
-        
-        // CORRECTION: If unpaidDays > fixedDaysBasis, it wipes salary.
-        // If unpaidDays (e.g. 28) < 30... result is positive.
-        // We should PROBABLY clamp unpaidDays to NOT exclude more than salary?
-        // Actually, let's look at `daysForPay`.
-        // If daysForPay = 0. Pay should be 0.
-        // Deduction logic gives 2000 for Feb.
-        // Earned Logic gives: 0 * 1000 = 0.
-        
-        // Which one does user want?
-        // User wants "29500 for half day loss".
-        // Earned Logic (30 day basis):
-        // Dec (31). Work 30.5. Earned 30.5.
-        // 30.5 * 1000 = 30500.
-        // User wants 29500.
-        
-        // So User DOES NOT WANT Earned Logic for 31 day month.
-        // User WANTS Deduction logic.
-        
-        // What about Feb?
-        // Deduction logic is risky for full absence.
-        // Patch:
-        // if (daysForPay < totalDaysInMonth / 2) {
-        //    // If worked less than half month, switch to Earned Logic?
-        //    payableSalary = daysForPay * dailyRate;
-        // } else {
-        //    payableSalary = monthlySalary - (unpaidDays * dailyRate);
-        // }
-        
-        // Try Case: Feb (28). Work 1 day.
-        // Deduction: 30000 - (27 * 1000) = 3000.
-        // Earned: 1 * 1000 = 1000.
-        // Discrepancy.
-        
-        // Given the request is specifically about "Half Day", let's assume standard full-time context.
-        // I will implement Deduction Logic as primary. 
-        // But maybe force 0 if presentDaysCount is 0.
     }
     
     if (payableSalary < 0) payableSalary = 0;
@@ -1248,7 +1167,7 @@ export default function AdminDashboard() {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
-      maximumFractionDigits: 0
+      maximumFractionDigits: 2
     }).format(amount);
   };
 

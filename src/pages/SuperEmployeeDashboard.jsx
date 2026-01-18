@@ -343,7 +343,7 @@ export default function SuperEmployeeDashboard() {
     let earnedDays = 0;
     let presentDaysCount = 0;
     const today = dayjs();
-    let boostedDays = 0; // Removed unused variable logic
+
 
 
     
@@ -461,11 +461,7 @@ export default function SuperEmployeeDashboard() {
                   }
               }
           }
-          earnedDays += earned;
-       
-          if (isWeekend || isHoliday || hoursForPay >= 3) {
-              presentDaysCount++;
-          }
+
       }
     }); // End of monthlyRecords loop
 
@@ -609,15 +605,13 @@ export default function SuperEmployeeDashboard() {
     daysForPay += paidLeavesCount;
 
     // Calculate Billable Days (Denominator)
-    const fixedDaysBasis = 30;
+    const daysInCurrentMonth = selectedMonth.daysInMonth();
     const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
-    const dailyRate = monthlySalary / fixedDaysBasis;
+    const dailyRate = monthlySalary / daysInCurrentMonth;
     
-    const totalDaysInMonth = selectedMonth.daysInMonth();
-    let unpaidDays = totalDaysInMonth - daysForPay;
-    if (unpaidDays < 0) unpaidDays = 0;
-    
-    let payableSalary = monthlySalary - (unpaidDays * dailyRate);
+    // User Request: Calculate strictly based on Net Earned Days
+    // Formula: Net Earned * Daily Rate (Dynamic Basis)
+    let payableSalary = daysForPay * dailyRate;
     
     // Incentive
     const incentiveAmount = 0; // incentives not yet implemented in Super Dashboard
@@ -645,7 +639,7 @@ export default function SuperEmployeeDashboard() {
       passedEligibleHours,
       passedDifference: passedEligibleHours - passedTargetHours,
       // Salary specific exports
-      payableSalary: Math.round(payableSalary), 
+      payableSalary, 
       monthlySalary,
       incentiveAmount: 0, 
       grantedLeaves: paidLeavesCount,
@@ -907,7 +901,7 @@ export default function SuperEmployeeDashboard() {
 
  
   /* ================= EDIT (Self) ================= */
-  const openEdit = (record) => {
+  const openEdit = React.useCallback((record) => {
     setCurrentRecord(record);
     form.setFieldsValue({
       inTime: record.inTime,
@@ -915,7 +909,7 @@ export default function SuperEmployeeDashboard() {
       punchTimes: (record.punchTimes || []).join(", "),
     });
     setEditOpen(true);
-  };
+  }, [form]);
 
   const handleUpdate = async (values) => {
     // Make sure we calculate from the *Punch Times*, not just assume manual input is correct
@@ -1044,7 +1038,7 @@ export default function SuperEmployeeDashboard() {
     return d.isValid() ? d.format("dddd, MMMM DD, YYYY") : dateStr;
   };
 
-  const toggleHighlight = async (record, timeVal) => {
+  const toggleHighlight = React.useCallback(async (record, timeVal) => {
     if (!timeVal) return;
     try {
       const currentHighlights = record.highlightedTimes || [];
@@ -1064,30 +1058,14 @@ export default function SuperEmployeeDashboard() {
       console.error(e);
       message.error("Failed to update highlight");
     }
-  };
+  }, [fetchMyData]);
 
-  /* ================= REQUEST ================= */
-  // Renamed or Aliased for compatibility with UI call
-  const openRequest = (record) => {
-    setCurrentRecord(record);
-    form.setFieldsValue({
-      punchTimes: (record.punchTimes || []).join(", "),
-      reason: "",
-    });
-    setEditOpen(true);
-  };
-  
+
+
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [requestDate, setRequestDate] = useState(null);
   const [requestType, setRequestType] = useState("");
   const [requestReason, setRequestReason] = useState("");
-
-  const openRequestModal = (date, type) => {
-      setRequestDate(date);
-      setRequestType(type);
-      setRequestReason("");
-      setRequestModalOpen(true);
-  };
 
   const submitDirectRequest = async () => {
        if (!requestReason) {
@@ -1121,6 +1099,15 @@ export default function SuperEmployeeDashboard() {
            message.error("Failed to send request");
        }
   };
+
+  const openRequestModal = (date, type) => {
+      setRequestDate(date);
+      setRequestType(type);
+      setRequestReason("");
+      setRequestModalOpen(true);
+  };
+
+
 
     /* ================= COMPUTED DATA ================= */
   const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate, adjustments]);
