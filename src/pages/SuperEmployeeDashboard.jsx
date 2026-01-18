@@ -343,7 +343,8 @@ export default function SuperEmployeeDashboard() {
     let earnedDays = 0;
     let presentDaysCount = 0;
     const today = dayjs();
-    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
+    let boostedDays = 0; // Removed unused variable logic
+
 
     
 
@@ -522,7 +523,7 @@ export default function SuperEmployeeDashboard() {
     
     const leavesCount = monthlyRecords.filter(r => r.isLeave).length;
     const paidLeavesCount = monthlyRecords.filter(r => r.isLeave && r.leaveType === 'Paid').length;
-    const totalLeaves = missingDays.length + zeroDays.length + leavesCount;
+
 
     // --- SANDWICH LEAVE LOGIC ---
     const sandwichDays = [];
@@ -665,12 +666,17 @@ export default function SuperEmployeeDashboard() {
 
       const q = query(
         collection(db, "punches"),
-        where("email", "==", userEmail),
         where("date", ">=", startOfMonth),
         where("date", "<=", endOfMonth)
       );
       const snap = await getDocs(q);
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const allData = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      
+      // Filter for current user (robust email check)
+      const data = allData.filter(d => 
+          (d.email && d.email.toLowerCase() === userEmail) || 
+          (d.employeeId && d.employeeId === employeeId) // Fallback to ID
+      );
       
       // Sort Descending
       data.sort((a, b) => {
@@ -686,7 +692,7 @@ export default function SuperEmployeeDashboard() {
       message.error("Failed to fetch data");
     }
     setLoading(false);
-  }, [userEmail, selectedMonth]); // Added selectedMonth dependency
+  }, [userEmail, selectedMonth, employeeId]);
 
   const fetchRequests = React.useCallback(async () => {
     try {
@@ -792,7 +798,7 @@ export default function SuperEmployeeDashboard() {
                             <ClockCircleOutlined /> Weekend Approvals Pending ({payroll.pendingWeekends.length})
                         </div>
                         {payroll.pendingWeekends.map(pw => (
-                            <div key={pw.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, background: darkMode ? "#222" : "#fffbe6", padding: "4px 8px", borderRadius: 4, border: "1px solid #faad14" }}>
+                            <div key={pw.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, background: darkMode ? "#222" : "#fffbe6", padding: "4px 8px", borderRadius: 4, border: "1px solid #faad14", color: darkMode ? "#e6f7ff" : "inherit" }}>
                                 <span style={{ fontSize: 12 }}>{pw.date} — {pw.dailyHours.toFixed(2)}h</span>
                                 <Tag color="orange" style={{fontSize: 10}}>Waiting Admin</Tag>
                             </div>
@@ -808,7 +814,7 @@ export default function SuperEmployeeDashboard() {
                         </div>
                         <div style={{ maxHeight: 200, overflowY: "auto" }}>
                             {payroll.shortDays.map(sd => (
-                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', color: darkMode ? "#e6f7ff" : "inherit" }}>
                                     <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
                                     <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
                                 </div>
@@ -825,7 +831,7 @@ export default function SuperEmployeeDashboard() {
                         </div>
                         <div style={{ maxHeight: 200, overflowY: "auto" }}>
                             {payroll.zeroDays.map(sd => (
-                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: darkMode ? "#e6f7ff" : "inherit" }}>
                                     <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
                                     <Button type="primary" size="small" onClick={() => openRequestModal(sd.date, 'Missing Entry Correction')} style={{height: 22, fontSize: 11}}>Request</Button>
                                 </div>
@@ -842,7 +848,7 @@ export default function SuperEmployeeDashboard() {
                         </div>
                         <div style={{ maxHeight: 200, overflowY: "auto" }}>
                             {payroll.missingDays.map(dateStr => (
-                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: darkMode ? "#e6f7ff" : "inherit" }}>
                                     <span>{dateStr}</span>
                                 </div>
                             ))}
@@ -867,10 +873,9 @@ export default function SuperEmployeeDashboard() {
     return { inTime: "", outTime: "", totalHours: "0:00" };
   }
 
-  // Clean only — DO NOT sort (sorting breaks IN/OUT pairing)
-  const cleanTimes = times.filter(
-    t => typeof t === "string" && /^\d{1,2}:\d{2}$/.test(t)
-  );
+  // Keep original order, only clean
+  const cleanTimes = times
+    .filter(t => typeof t === "string" && /^\d{1,2}:\d{2}$/.test(t));
 
   if (cleanTimes.length < 2) {
     return { inTime: "", outTime: "", totalHours: "0:00" };
@@ -878,7 +883,6 @@ export default function SuperEmployeeDashboard() {
 
   let totalMinutes = 0;
 
-  // Sum IN → OUT pairs
   for (let i = 0; i < cleanTimes.length - 1; i += 2) {
     const [inH, inM] = cleanTimes[i].split(":").map(Number);
     const [outH, outM] = cleanTimes[i + 1].split(":").map(Number);
@@ -1118,10 +1122,9 @@ export default function SuperEmployeeDashboard() {
        }
   };
 
-  /* ================= COMPUTED DATA ================= */
-  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate]);
+    /* ================= COMPUTED DATA ================= */
+  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate, adjustments]);
   
-
   const dataSource = React.useMemo(() => {
       // 1. Process existing records
       const processedRecords = records.map(r => {
@@ -1216,7 +1219,6 @@ export default function SuperEmployeeDashboard() {
       }).filter(h => {
           // Exclude if already in records (worked)
           const inRecords = records.some(r => r.date === h.date);
-          // Also exclude if in missing? (Shouldn't be, logic confirmed)
           return !inRecords; 
       }).map(h => {
            const d = dayjs(h.date);
@@ -1251,7 +1253,7 @@ export default function SuperEmployeeDashboard() {
       });
       
       return combined;
-  }, [records, payroll, selectedMonth, userEmail, holidays]);
+  }, [records, payroll, selectedMonth, userEmail, holidays, adjustments]);
 
   const maxPunches = React.useMemo(() => {
     if (!dataSource || dataSource.length === 0) return 0;
@@ -1364,7 +1366,7 @@ export default function SuperEmployeeDashboard() {
         </div>
 
         {/* PAYROLL STATS */}
-        {renderPayrollStats(payroll)}
+        {renderPayrollStats(payroll, darkMode)}
 
         {/* REQUESTS SECTION */}
         {requests.length > 0 && (
@@ -1439,6 +1441,7 @@ export default function SuperEmployeeDashboard() {
             />
             )}
         </Card>
+
 
         {/* EDIT MODAL */}
         <Modal
