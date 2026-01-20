@@ -48,6 +48,8 @@ import {
   setDoc, // Added setDoc
   addDoc
 } from "firebase/firestore";
+import { ref, get, child } from "firebase/database"; // Realtime DB imports
+import { realtimeDb } from "../firebase"; // Realtime DB instance
 import Papa from "papaparse"; // Added Papa
 import { signOut, onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -270,6 +272,97 @@ export default function SuperEmployeeDashboard() {
       },
     });
     return false;
+  };
+
+  /* ================= DEVICE SYNC (RTDB) ================= */
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncFromDevice = async () => {
+    setSyncing(true);
+    try {
+      const dbRef = ref(realtimeDb);
+      const snapshot = await get(child(dbRef, `attendance`));
+
+      if (snapshot.exists()) {
+        const rawData = snapshot.val();
+        // Group by Employee + Date
+        const grouped = {};
+
+        Object.values(rawData).forEach(record => {
+          const empId = record.EMP_CODE;
+          const rawDate = record.PUNCH_DATE; // e.g., "16-10-2025"
+          const time = record.PUNCH_TIME; // e.g., "16:26:56"
+
+          if (!empId || !rawDate || !time) return;
+
+          // Parse Date to YYYY-MM-DD
+          const d = dayjs(rawDate, ["DD-MM-YYYY", "YYYY-MM-DD", "MM-DD-YYYY"], false);
+          if (!d.isValid()) return;
+          const dateKey = d.format("YYYY-MM-DD");
+
+          const key = `${empId}_${dateKey}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              employeeId: empId,
+              date: dateKey,
+              times: [],
+              name: `${record.FIRST_NAME || ''} ${record.LAST_NAME || ''}`.trim()
+            };
+          }
+          // Parse Time to HH:mm (remove seconds for consistency if needed, or keep)
+          // App uses HH:mm usually. Let's keep HH:mm
+          const t = time.substring(0, 5); // "16:26"
+          if (!grouped[key].times.includes(t)) {
+             grouped[key].times.push(t);
+          }
+        });
+
+        let successCount = 0;
+        const updates = Object.values(grouped).map(async (group) => {
+            // Sort times for correct IN/OUT calc
+            group.times.sort();
+            
+            const { inTime, outTime, totalHours } = calculateTimes(group.times);
+            
+            // Generate IDs
+            const safeEmpId = (group.employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+            const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
+            const uniqueId = `${safeEmpId}_${safeDate}`;
+
+            const docData = {
+                employeeId: group.employeeId,
+                // If name is empty in RTDB, maybe don't overwrite? 
+                // But for now let's construct what we have. API key might be missing name if fresh.
+                // We'll use a fallback or existing logic in future, but here we set what we have.
+                employee: group.name ? `${group.name} (${group.employeeId})` : group.employeeId,
+                date: group.date,
+                numberOfPunches: group.times.length,
+                punchTimes: group.times,
+                inTime,
+                outTime,
+                hours: totalHours,
+                syncedAt: new Date().toISOString(),
+                source: 'device_sync'
+            };
+
+            // Merge true to avoid nuking other fields if they exist? 
+            // The App usually does setDoc which overwrites. Sticking to pattern.
+            await setDoc(doc(db, "punches", uniqueId), docData, { merge: true });
+            successCount++;
+        });
+
+        await Promise.all(updates);
+        message.success(`Synced ${successCount} daily records from Device!`);
+        fetchMyData(); // Refresh View
+
+      } else {
+        message.info("No data available in Device Database");
+      }
+    } catch (error) {
+      console.error(error);
+      message.error("Failed to sync from device");
+    }
+    setSyncing(false);
   };
 
   /* ================= PAYROLL CALCULATIONS ================= */
@@ -1337,15 +1430,30 @@ export default function SuperEmployeeDashboard() {
               checkedChildren="Dark"
               unCheckedChildren="Light"
             />
-            <Button icon={<ReloadOutlined />} onClick={() => { fetchMyData(); fetchRequests(); fetchHolidays(); }}>
-              Refresh
-            </Button>
             <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
+            
+            <Button 
+                icon={<ReloadOutlined />} 
+                onClick={() => { fetchMyData(); fetchRequests(); fetchHolidays(); }} 
+                loading={loading}
+            >
+                Refresh
+            </Button>
 
-            {/* Upload Page Button Inline - Same as Admin */}
+            <Button
+              icon={<BulbOutlined />}
+              onClick={handleSyncFromDevice}
+              loading={syncing}
+              type="primary"
+              style={{ background: "#722ed1", borderColor: "#722ed1" }}
+            >
+              Sync Device
+            </Button>
+
             <Upload beforeUpload={handleFileUpload} showUploadList={false} accept=".csv">
-                <Button type="primary" icon={<UploadOutlined />} loading={uploading}>Upload CSV</Button>
+              <Button type="default" icon={<UploadOutlined />} loading={uploading}>Upload CSV</Button>
             </Upload>
+
             <Button danger icon={<LogoutOutlined />} onClick={handleLogout}>
               Logout
             </Button>
