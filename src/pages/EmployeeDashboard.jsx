@@ -39,10 +39,14 @@ import {
   query,
   where,
   addDoc,
-  setDoc, // Added setDoc
   collection,
-  updateDoc
+  updateDoc,
+  setDoc,
+  getDoc
 } from "firebase/firestore";
+import { ref, get, child } from "firebase/database"; // Realtime DB imports
+import { realtimeDb } from "../firebase"; // Realtime DB instance
+
 import Papa from "papaparse"; // Added Papa
 import { signOut, onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -138,6 +142,7 @@ const calculateTimes = (times) => {
 
 export default function EmployeeDashboard() {
   const [records, setRecords] = useState([]);
+  const [syncing, setSyncing] = useState(false); // NEW
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [currentRecord, setCurrentRecord] = useState(null);
@@ -721,6 +726,111 @@ export default function EmployeeDashboard() {
 
 
 
+
+  /* ================= DEVICE SYNC (RTDB) ================= */
+  const handleSyncFromDevice = async () => {
+    if (!employeeId) {
+        message.error("Employee ID not found. Cannot sync.");
+        return;
+    }
+    setSyncing(true);
+    try {
+      const dbRef = ref(realtimeDb);
+      const snapshot = await get(child(dbRef, `attendance`));
+
+      if (snapshot.exists()) {
+        const rawData = snapshot.val();
+        // Group by Employee + Date
+        const grouped = {};
+
+        Object.values(rawData).forEach(record => {
+          const empId = record.EMP_CODE;
+          
+          // SAFETY FILTER FOR EMPLOYEE DASHBOARD: ONLY CURRENT USER
+          if (String(empId) !== String(employeeId)) return;
+
+          const rawDate = record.PUNCH_DATE; // e.g., "16-10-2025"
+          const time = record.PUNCH_TIME; // e.g., "16:26:56"
+
+          if (!empId || !rawDate || !time) return;
+
+          // Parse Date to YYYY-MM-DD
+          const d = dayjs(rawDate, ["DD-MM-YYYY", "YYYY-MM-DD", "MM-DD-YYYY"], false);
+          if (!d.isValid()) return;
+          const dateKey = d.format("YYYY-MM-DD");
+
+          const key = `${empId}_${dateKey}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              employeeId: empId,
+              date: dateKey,
+              times: [],
+              name: `${record.FIRST_NAME || ''} ${record.LAST_NAME || ''}`.trim()
+            };
+          }
+          // Parse Time to HH:mm
+          const t = time.substring(0, 5); // "16:26"
+          if (!grouped[key].times.includes(t)) {
+             grouped[key].times.push(t);
+          }
+        });
+
+        let successCount = 0;
+        const updates = Object.values(grouped).map(async (group) => {
+            // Sort times for correct IN/OUT calc
+            group.times.sort();
+            
+            const { inTime, outTime, totalHours } = calculateTimes(group.times);
+            
+            // Generate IDs
+            const safeEmpId = (group.employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+            const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
+            const uniqueId = `${safeEmpId}_${safeDate}`;
+
+            // Check if record exists and is manually edited
+            const docRef = doc(db, "punches", uniqueId);
+            const docSnap = await getDoc(docRef);
+
+            if (docSnap.exists() && docSnap.data().isEdited) {
+                return; // Skip overwriting manually edited records
+            }
+
+            const docData = {
+                employeeId: group.employeeId,
+                employee: group.name ? `${group.name} (${group.employeeId})` : group.employeeId,
+                date: group.date,
+                numberOfPunches: group.times.length,
+                punchTimes: group.times,
+                inTime,
+                outTime,
+                hours: totalHours,
+                syncedAt: new Date().toISOString(),
+                source: 'device_sync'
+            };
+
+            // Merge true to update existing records without wiping other fields
+            await setDoc(docRef, docData, { merge: true });
+            successCount++;
+        });
+
+        await Promise.all(updates);
+        if (successCount > 0) {
+            message.success(`Synced ${successCount} records!`);
+            fetchMyData(); // Refresh View
+        } else {
+            message.info("No matching records found on device.");
+        }
+
+      } else {
+        message.info("No data available in Device Database");
+      }
+    } catch (error) {
+      console.error(error);
+      message.error("Failed to sync from device");
+    }
+    setSyncing(false);
+  };
+
   /* ================= RENDER HELPERS ================= */
   const renderPayrollStats = (payroll, darkMode) => (
       <div style={{ 
@@ -1271,6 +1381,15 @@ export default function EmployeeDashboard() {
               checkedChildren="Dark"
               unCheckedChildren="Light"
             />
+            <Button 
+                icon={<BulbOutlined />} 
+                onClick={handleSyncFromDevice}
+                loading={syncing}
+                type="primary"
+                style={{ background: "#722ed1", borderColor: "#722ed1" }}
+            >
+                Sync Device
+            </Button>
             <Button icon={<ReloadOutlined />} onClick={() => { fetchMyData(); fetchHolidays(); }}>
               Refresh
             </Button>

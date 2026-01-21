@@ -5,7 +5,9 @@ service cloud.firestore {
     // Helper function for Admin or Super Employee
     function isStaff() {
       return request.auth.token.email == "chirag@theawakens.com" 
-          || request.auth.token.email == "jayesh@theawakens.com";
+          || request.auth.token.email == "jayesh@theawakens.com"
+          || request.auth.token.email == "quake@theawakens.com"
+          || request.auth.token.email == "aradhya@theawakens.com";
     }
 
     match /punches/{docId} {

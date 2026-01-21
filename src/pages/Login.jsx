@@ -14,9 +14,16 @@ export default function Login() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       message.success("Login successful!");
+      
+      const SUPER_EMPLOYEES = [
+        "jayesh@theawakens.com", 
+        "quake@theawakens.com", 
+        "aradhya@theawakens.com"
+      ];
+
       if (email === "chirag@theawakens.com") {
         navigate("/admin");
-      } else if (email === "jayesh@theawakens.com") {
+      } else if (SUPER_EMPLOYEES.includes(email)) {
         navigate("/super-employee");
       } else {
         navigate("/employee");

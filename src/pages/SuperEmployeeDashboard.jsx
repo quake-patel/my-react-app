@@ -45,8 +45,9 @@ import {
   doc,
   deleteDoc,
   getDoc,
-  setDoc, // Added setDoc
-  addDoc
+  setDoc,
+  addDoc,
+  getDoc
 } from "firebase/firestore";
 import { ref, get, child } from "firebase/database"; // Realtime DB imports
 import { realtimeDb } from "../firebase"; // Realtime DB instance
@@ -329,6 +330,16 @@ export default function SuperEmployeeDashboard() {
             const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
             const uniqueId = `${safeEmpId}_${safeDate}`;
 
+            // Check if record exists and is manually edited
+            const docRef = doc(db, "punches", uniqueId);
+            const docSnap = await getDoc(docRef);
+
+            if (docSnap.exists() && docSnap.data().isEdited) {
+                // Skip this record as it has been manually verified/edited
+                // console.log(`Skipping sync for ${uniqueId} as it is manually edited.`);
+                return; 
+            }
+
             const docData = {
                 employeeId: group.employeeId,
                 // If name is empty in RTDB, maybe don't overwrite? 
@@ -347,7 +358,7 @@ export default function SuperEmployeeDashboard() {
 
             // Merge true to avoid nuking other fields if they exist? 
             // The App usually does setDoc which overwrites. Sticking to pattern.
-            await setDoc(doc(db, "punches", uniqueId), docData, { merge: true });
+            await setDoc(docRef, docData, { merge: true });
             successCount++;
         });
 

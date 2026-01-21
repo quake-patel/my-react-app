@@ -59,7 +59,10 @@ import ChatDrawer from "../components/ChatDrawer";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
 import { db, auth } from "../firebase";
-import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, setDoc, query, where } from "firebase/firestore";
+import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, setDoc, getDoc, query, where } from "firebase/firestore";
+import { ref, get, child } from "firebase/database"; // Realtime DB imports
+import { realtimeDb } from "../firebase"; // Realtime DB instance
+
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 
@@ -229,6 +232,7 @@ const DEFAULT_HOLIDAYS = [
 
 export default function AdminDashboard() {
   const [records, setRecords] = useState([]);
+  const [syncing, setSyncing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [viewMode, setViewMode] = useState("table");
   const [editOpen, setEditOpen] = useState(false);
@@ -501,6 +505,100 @@ export default function AdminDashboard() {
       },
     });
     return false;
+  };
+
+  /* ================= DEVICE SYNC (RTDB) ================= */
+  const handleSyncFromDevice = async () => {
+    setSyncing(true);
+    try {
+      const dbRef = ref(realtimeDb);
+      const snapshot = await get(child(dbRef, `attendance`));
+
+      if (snapshot.exists()) {
+        const rawData = snapshot.val();
+        // Group by Employee + Date
+        const grouped = {};
+
+        Object.values(rawData).forEach(record => {
+          const empId = record.EMP_CODE;
+          const rawDate = record.PUNCH_DATE; // e.g., "16-10-2025"
+          const time = record.PUNCH_TIME; // e.g., "16:26:56"
+
+          if (!empId || !rawDate || !time) return;
+
+          // Parse Date to YYYY-MM-DD
+          const d = dayjs(rawDate, ["DD-MM-YYYY", "YYYY-MM-DD", "MM-DD-YYYY"], false);
+          if (!d.isValid()) return;
+          const dateKey = d.format("YYYY-MM-DD");
+
+          const key = `${empId}_${dateKey}`;
+          if (!grouped[key]) {
+            grouped[key] = {
+              employeeId: empId,
+              date: dateKey,
+              times: [],
+              name: `${record.FIRST_NAME || ''} ${record.LAST_NAME || ''}`.trim()
+            };
+          }
+          // Parse Time to HH:mm
+          const t = time.substring(0, 5); // "16:26"
+          if (!grouped[key].times.includes(t)) {
+             grouped[key].times.push(t);
+          }
+        });
+
+        let successCount = 0;
+        const updates = Object.values(grouped).map(async (group) => {
+            // Sort times for correct IN/OUT calc
+            group.times.sort();
+            
+            const { inTime, outTime, totalHours } = calculateTimes(group.times);
+            
+            // Generate IDs
+            const safeEmpId = (group.employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+            const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
+            const uniqueId = `${safeEmpId}_${safeDate}`;
+
+            // Check if record exists and is manually edited
+            const docRef = doc(db, "punches", uniqueId);
+            const docSnap = await getDoc(docRef);
+
+            if (docSnap.exists() && docSnap.data().isEdited) {
+                // Skip this record as it has been manually verified/edited
+                // console.log(`Skipping sync for ${uniqueId} as it is manually edited.`);
+                return; 
+            }
+
+            const docData = {
+                employeeId: group.employeeId,
+                employee: group.name ? `${group.name} (${group.employeeId})` : group.employeeId,
+                date: group.date,
+                numberOfPunches: group.times.length,
+                punchTimes: group.times,
+                inTime,
+                outTime,
+                hours: totalHours,
+                syncedAt: new Date().toISOString(),
+                source: 'device_sync'
+            };
+
+            // Merge true to update existing records without wiping other fields
+            await setDoc(docRef, docData, { merge: true });
+            successCount++;
+        });
+
+        await Promise.all(updates);
+        message.success(`Synced ${successCount} daily records from Device!`);
+        fetchData(); // Refresh View
+
+      } else {
+        message.info("No data available in Device Database");
+      }
+    } catch (error) {
+      console.error(error);
+      message.error("Failed to sync from device");
+    }
+    setSyncing(false);
   };
 
   const handleLogout = async () => {
@@ -1979,6 +2077,15 @@ export default function AdminDashboard() {
               </Col>
               <Col>
                   <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                      <Button 
+                        icon={<BulbOutlined />}
+                        onClick={handleSyncFromDevice}
+                        loading={syncing}
+                        type="primary"
+                        style={{ background: "#722ed1", borderColor: "#722ed1" }}
+                      >
+                        Sync Device
+                      </Button>
                       <Button icon={<ReloadOutlined />} onClick={fetchData}>Refresh</Button>
                       <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
                       <Button icon={<LogoutOutlined />} onClick={handleLogout}>Logout</Button>

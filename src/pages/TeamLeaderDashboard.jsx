@@ -45,7 +45,8 @@ export default function TeamLeaderDashboard() {
 
     await updateDoc(doc(db, "punches", current.punchId), {
       punchTimes,
-      numberOfPunches: punchTimes.length
+      numberOfPunches: punchTimes.length,
+      isEdited: true // PROTECT FROM SYNC OVERWRITE
     });
 
     await updateDoc(doc(db, "punchRequests", current.id), {
