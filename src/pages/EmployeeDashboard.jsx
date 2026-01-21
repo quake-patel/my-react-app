@@ -41,8 +41,7 @@ import {
   addDoc,
   collection,
   updateDoc,
-  setDoc,
-  getDoc
+  setDoc
 } from "firebase/firestore";
 import { ref, get, child } from "firebase/database"; // Realtime DB imports
 import { realtimeDb } from "../firebase"; // Realtime DB instance
