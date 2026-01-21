@@ -8,7 +8,7 @@ import TeamLeaderDashboard from "./pages/TeamLeaderDashboard.jsx";
 import SuperEmployeeDashboard from "./pages/SuperEmployeeDashboard.jsx";
 export default function App() {
   return (
-    <BrowserRouter basename="/my-react-app">
+    <BrowserRouter basename="/punch-app">
       <Routes>
         <Route path="/" element={<Login />} /> 
         <Route path="/admin" element={<AdminDashboard />} />
