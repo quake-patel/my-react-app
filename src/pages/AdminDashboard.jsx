@@ -549,37 +549,44 @@ export default function AdminDashboard() {
 
         let successCount = 0;
         const updates = Object.values(grouped).map(async (group) => {
-            // Sort times for correct IN/OUT calc
-            group.times.sort();
-            
-            const { inTime, outTime, totalHours } = calculateTimes(group.times);
-            
             // Generate IDs
             const safeEmpId = (group.employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
             const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
             const uniqueId = `${safeEmpId}_${safeDate}`;
 
-            // Check if record exists and is manually edited
             const docRef = doc(db, "punches", uniqueId);
             const docSnap = await getDoc(docRef);
 
-            if (docSnap.exists() && docSnap.data().isEdited) {
-                // Skip this record as it has been manually verified/edited
-                // console.log(`Skipping sync for ${uniqueId} as it is manually edited.`);
-                return; 
+            // MERGE LOGIC: Combine existing times with new times
+            let finalTimes = [...group.times];
+            let isEdited = false;
+
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                const existingTimes = data.punchTimes || [];
+                isEdited = data.isEdited || false;
+                
+                // Combine and Deduplicate
+                finalTimes = [...new Set([...existingTimes, ...group.times])];
             }
+            
+            // Sort times for correct IN/OUT calc
+            finalTimes.sort();
+            
+            const { inTime, outTime, totalHours } = calculateTimes(finalTimes);
 
             const docData = {
                 employeeId: group.employeeId,
                 employee: group.name ? `${group.name} (${group.employeeId})` : group.employeeId,
                 date: group.date,
-                numberOfPunches: group.times.length,
-                punchTimes: group.times,
+                numberOfPunches: finalTimes.length,
+                punchTimes: finalTimes,
                 inTime,
                 outTime,
                 hours: totalHours,
                 syncedAt: new Date().toISOString(),
-                source: 'device_sync'
+                source: 'device_sync',
+                isEdited // Preserve edited status if it was already edited
             };
 
             // Merge true to update existing records without wiping other fields
