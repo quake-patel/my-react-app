@@ -3,7 +3,7 @@ import { Upload, Button, message, Layout, ConfigProvider, Switch, theme } from "
 import { UploadOutlined, BulbOutlined, ArrowLeftOutlined } from "@ant-design/icons";
 import Papa from "papaparse";
 import { db, auth } from "../firebase";
-import { collection, addDoc } from "firebase/firestore";
+import { collection, addDoc, setDoc, doc, getDocs, query, where, deleteDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import dayjs from "dayjs";
@@ -98,75 +98,125 @@ export default function UploadFile() {
         let successCount = 0;
         let failCount = 0;
 
-        for (let i = 0; i < results.data.length; i++) {
-          const row = results.data[i];
-          const employeeId = getField(row, ["Employee", "Employee ID", "Emp Code", "Card No", "ID"]);
-          const firstName = getField(row, ["First Name", "FirstName", "Name", "Employee Name"]);
-          const department = getField(row, ["Department", "Dept", "Dpt"]);
-          
-          // Date Normalization
-          let dateStr = getField(row, ["Date", "Punch Date"]);
-          
-          // Fix: Prioritize MM/DD/YYYY to match AdminDashboard logic
-          const formats = [
-              "MM/DD/YYYY", 
-              "M/D/YYYY", 
-              "MM-DD-YYYY", 
-              "M-D-YYYY", 
-              "YYYY-MM-DD", 
-              "DD/MM/YYYY", // Fallback
-              "DD-MM-YYYY"
-          ];
-          
-          let d = dayjs(dateStr, formats, true); 
-          if (!d.isValid()) {
-             d = dayjs(dateStr, formats, false);
+          // Track processed data for Cleanup
+          const processedIds = new Set();
+          const impactedEmployees = new Set();
+          let minDate = null;
+          let maxDate = null;
+
+          // Pass 1: Upload / Update
+          for (let i = 0; i < results.data.length; i++) {
+            const row = results.data[i];
+            const employeeId = getField(row, ["Employee", "Employee ID", "Emp Code", "Card No", "ID"]);
+            const firstName = getField(row, ["First Name", "FirstName", "Name", "Employee Name"]);
+            const department = getField(row, ["Department", "Dept", "Dpt"]);
+            
+            // Date Normalization
+            let dateStr = getField(row, ["Date", "Punch Date"]);
+            
+             // Fix: Prioritize DD-MM-YYYY for India/UK formats (Project Standard)
+             const formats = [
+                 "DD-MM-YYYY", 
+                 "DD/MM/YYYY",
+                 "MM-DD-YYYY", 
+                 "MM/DD/YYYY", 
+                 "M/D/YYYY", 
+                 "M-D-YYYY", 
+                 "YYYY-MM-DD"
+             ];
+             
+             let d = dayjs(dateStr, formats, true); 
+             if (!d.isValid()) {
+                d = dayjs(dateStr, formats, false);
+             }
+             
+             if (d.isValid()) {
+                dateStr = d.format("YYYY-MM-DD");
+             }
+  
+             const numberOfPunchesStr = getField(row, ["No. of Punches", "Punches"]);
+             const numberOfPunches = numberOfPunchesStr ? parseInt(numberOfPunchesStr, 10) : 0;
+             const timeValue = getField(row, ["Time", "Times", "Punch Records", "Punches"]);
+             const punchTimes = parseTimes(timeValue, numberOfPunches);
+             const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
+  
+             // Validation: If no Employee ID or Date, skip
+             if (!employeeId || !dateStr) {
+                 failCount++;
+                 continue;
+             }
+             
+             // Track Range
+             if (!minDate || dayjs(dateStr).isBefore(dayjs(minDate))) minDate = dateStr;
+             if (!maxDate || dayjs(dateStr).isAfter(dayjs(maxDate))) maxDate = dateStr;
+
+             // Unique ID Generation (Consistent with Dashboards)
+             const safeEmpId = (employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
+             const safeDate = (dateStr || "").replace(/[^a-zA-Z0-9-]/g, "_");
+             const uniqueId = `${safeEmpId}_${safeDate}`;
+
+             processedIds.add(uniqueId);
+             impactedEmployees.add(employeeId);
+  
+             const docData = {
+               employeeId: employeeId || "",
+               firstName: firstName || "",
+               employee: firstName ? `${firstName} (${employeeId || "N/A"})` : employeeId || "Unknown",
+               department: department || "",
+               date: dateStr || "", // Standardized Date
+               numberOfPunches: punchTimes.length,
+               punchTimes,
+               inTime,
+               outTime,
+               hours: totalHours,
+               uploadedAt: new Date().toISOString(),
+             };
+  
+             // Ensure 'email' field is populated
+             const rowEmail = firstName ? `${firstName.toLowerCase()}@theawakens.com` : "";
+             docData.email = rowEmail;
+  
+             try {
+               // USE setDoc to prevent duplicates
+               await setDoc(doc(db, "punches", uniqueId), docData);
+               successCount++;
+             } catch (e) {
+               console.error("Upload error:", e);
+               failCount++;
+             }
           }
-          
-          if (d.isValid()) {
-             dateStr = d.format("YYYY-MM-DD");
+
+          // Pass 2: Cleanup Missing Records in Range
+          if (minDate && maxDate && impactedEmployees.size > 0) {
+              console.log(`Cleaning up records between ${minDate} and ${maxDate} for ${impactedEmployees.size} employees...`);
+              
+              for (const empId of impactedEmployees) {
+                  try {
+                      const q = query(
+                          collection(db, "punches"),
+                          where("employeeId", "==", empId),
+                          where("date", ">=", minDate),
+                          where("date", "<=", maxDate)
+                      );
+                      const snapshot = await getDocs(q);
+                      const deletePromises = [];
+                      
+                      snapshot.docs.forEach(docSnap => {
+                          if (!processedIds.has(docSnap.id)) {
+                              console.log(`Deleting obsolete record: ${docSnap.id}`);
+                              deletePromises.push(deleteDoc(docSnap.ref));
+                          }
+                      });
+                      
+                      if (deletePromises.length > 0) {
+                          await Promise.all(deletePromises);
+                          console.log(`Deleted ${deletePromises.length} obsolete records for ${empId}`);
+                      }
+                  } catch (err) {
+                      console.error(`Cleanup failed for ${empId}`, err);
+                  }
+              }
           }
-
-          const numberOfPunchesStr = getField(row, ["No. of Punches", "Punches"]);
-          const numberOfPunches = numberOfPunchesStr ? parseInt(numberOfPunchesStr, 10) : 0;
-          const timeValue = getField(row, ["Time", "Times", "Punch Records", "Punches"]);
-          const punchTimes = parseTimes(timeValue, numberOfPunches);
-          const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
-
-          // Validation: If no Employee ID or Date, skip
-          if (!employeeId || !dateStr) {
-              failCount++;
-              continue;
-          }
-
-          const docData = {
-            employeeId: employeeId || "",
-            firstName: firstName || "",
-            employee: firstName ? `${firstName} (${employeeId || "N/A"})` : employeeId || "Unknown",
-            department: department || "",
-            date: dateStr || "", // Standardized Date
-            numberOfPunches: punchTimes.length,
-            punchTimes,
-            inTime,
-            outTime,
-            hours: totalHours,
-            uploadedAt: new Date().toISOString(),
-          };
-
-          // Filter Removed: User Requested ability to upload ALL data (like Admin)
-          // Since Rules now allow authenticated writes to 'punches', we don't need to filter.
-          // BUT we must ensure the 'email.email' field is populated correctly.
-          const rowEmail = firstName ? `${firstName.toLowerCase()}@theawakens.com` : "";
-          docData.email = rowEmail;
-
-          try {
-            await addDoc(punchesRef, docData);
-            successCount++;
-          } catch (e) {
-            console.error("Upload error:", e);
-            failCount++;
-          }
-        }
 
         setUploading(false);
         if (failCount > 0) {

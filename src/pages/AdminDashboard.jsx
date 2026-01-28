@@ -426,6 +426,11 @@ export default function AdminDashboard() {
       transformHeader: (h) => h.trim(),
       complete: async (results) => {
         let successCount = 0;
+        const processedIds = new Set();
+        const impactedEmployees = new Set();
+        let minDate = null;
+        let maxDate = null;
+
         for (let i = 0; i < results.data.length; i++) {
           const row = results.data[i];
           const employeeId = getField(row, ["Employee", "Employee ID"]);
@@ -437,15 +442,15 @@ export default function AdminDashboard() {
           // CRITICAL FIX: Date Parsing Priority
           // CSV shows "1/15/2024" -> Month/Day/Year. 
           // Previous priority "DD-MM" caused "02/05" to be May 2nd (05/02) instead of Feb 5th.
-          // New Priority: MM/DD/YYYY, M/D/YYYY, YYYY-MM-DD
+          // Fix: Prioritize DD-MM-YYYY for India/UK formats (Project Standard)
           const formats = [
+              "DD-MM-YYYY", 
+              "DD/MM/YYYY",
+              "MM-DD-YYYY", 
               "MM/DD/YYYY", 
               "M/D/YYYY", 
-              "MM-DD-YYYY", 
               "M-D-YYYY", 
-              "YYYY-MM-DD", 
-              "DD/MM/YYYY", // Fallback only
-              "DD-MM-YYYY"
+              "YYYY-MM-DD"
           ];
           
           let d = dayjs(date, formats, true); // Strict mode helps avoid guessing, but might fail on loose formats. Trying true.
@@ -472,6 +477,12 @@ export default function AdminDashboard() {
           const safeDate = (date || "").replace(/[^a-zA-Z0-9-]/g, "_");
           const uniqueId = `${safeEmpId}_${safeDate}`;
 
+          processedIds.add(uniqueId);
+          impactedEmployees.add(employeeId);
+          
+          if (!minDate || dayjs(date).isBefore(dayjs(minDate))) minDate = date;
+          if (!maxDate || dayjs(date).isAfter(dayjs(maxDate))) maxDate = date;
+
           const docData = {
             employeeId: employeeId || "",
             firstName: firstName || "",
@@ -493,6 +504,34 @@ export default function AdminDashboard() {
           } catch (e) {
             console.error(e);
           }
+        }
+        
+        // CLEANUP PHASE
+        if (minDate && maxDate && impactedEmployees.size > 0) {
+             for (const empId of impactedEmployees) {
+                  try {
+                      const q = query(
+                          collection(db, "punches"),
+                          where("employeeId", "==", empId),
+                          where("date", ">=", minDate),
+                          where("date", "<=", maxDate)
+                      );
+                      const snapshot = await getDocs(q);
+                      const deletePromises = [];
+                      
+                      snapshot.docs.forEach(docSnap => {
+                          if (!processedIds.has(docSnap.id)) {
+                              deletePromises.push(deleteDoc(docSnap.ref));
+                          }
+                      });
+                      
+                      if (deletePromises.length > 0) {
+                          await Promise.all(deletePromises);
+                      }
+                  } catch (err) {
+                      console.error(`Cleanup failed for ${empId}`, err);
+                  }
+             }
         }
         setUploading(false);
         fetchData();
