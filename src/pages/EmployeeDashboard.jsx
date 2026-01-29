@@ -533,8 +533,6 @@ export default function EmployeeDashboard() {
 
     // Rule: Overtime CAP.
     // Earned Days cannot exceed Present Days count.
-    // Rule: Overtime CAP.
-    // Earned Days cannot exceed Present Days count.
     // effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount); // DISABLED to match Admin Strict Logic
     
     // Calculate Missing Days (Absences)
@@ -671,22 +669,17 @@ export default function EmployeeDashboard() {
     daysForPay -= sandwichDeduction;
 
     // APPLY GRANTED LEAVES (User Adjustment)
-    // ADJUST FOR SANDWICH
-    // daysForPay -= sandwichDeduction; (Already done above)
+    // Adding granted leaves effectively pays for those days.
+    daysForPay += paidLeavesCount;
 
-    // --- SALARY CALCULATION ---
-    // If we have a stored salary for this user, use it. Otherwise default to 30000
-    const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
-    
     // Calculate Billable Days (Denominator)
-    const fixedDaysBasis = 30;
-    const dailyRate = monthlySalary / fixedDaysBasis;
+    const daysInCurrentMonth = selectedMonth.daysInMonth();
+    const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
+    const dailyRate = monthlySalary / daysInCurrentMonth;
     
-    const totalDaysInMonth = selectedMonth.daysInMonth();
-    let unpaidDays = totalDaysInMonth - daysForPay;
-    if (unpaidDays < 0) unpaidDays = 0;
-    
-    let payableSalary = monthlySalary - (unpaidDays * dailyRate);
+    // User Request: Calculate strictly based on Net Earned Days
+    // Formula: Net Earned * Daily Rate (Dynamic Basis)
+    let payableSalary = daysForPay * dailyRate;
     
     // Incentive
     const monthlyIncentives = incentives.filter(inc => inc.month === selectedMonth.format("YYYY-MM"));
@@ -849,8 +842,8 @@ export default function EmployeeDashboard() {
                   <Statistic 
                     title="Net Earned" 
                     value={payroll.netEarningDays} 
-                    suffix={`/ ${payroll.daysInMonth}`}
-                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
+                    suffix={`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: payroll.netEarningDays < payroll.daysInMonth ? "#cf1322" : "#3f8600" }} 
                   />
               </Col>
               <Col xs={12} sm={3}>
@@ -995,6 +988,7 @@ export default function EmployeeDashboard() {
       if (!empSnap.empty) {
           const empData = empSnap.docs[0].data();
           setEmployeeId(empData.employeeId);
+          setJoiningDate(empData.joiningDate || null);
           setCurrentUserName(empData.firstName ? `${empData.firstName} ${empData.lastName || ''}` : empData.employee);
       } else if (data.length > 0) {
            // Fallback to punch record name

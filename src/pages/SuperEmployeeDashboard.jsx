@@ -108,6 +108,7 @@ const parseTimes = (timeValue, numberOfPunches) => {
 export default function SuperEmployeeDashboard() {
   const [records, setRecords] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [incentives, setIncentives] = useState([]); // Added Incentives State
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [currentRecord, setCurrentRecord] = useState(null);
@@ -147,6 +148,24 @@ export default function SuperEmployeeDashboard() {
       console.error("Failed to load holidays");
     }
   };
+
+  /* ================= INCENTIVES ================= */
+  const fetchIncentives = async () => {
+    if (!employeeId) return;
+    try {
+        const q = query(collection(db, "Incentives"), where("employeeId", "==", employeeId));
+        const snap = await getDocs(q);
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setIncentives(data);
+    } catch (e) {
+        console.error("Failed to fetch incentives", e);
+    }
+  };
+
+  useEffect(() => {
+      if (employeeId) fetchIncentives();
+  }, [employeeId]);
+
   
   const [joiningDate, setJoiningDate] = useState(null); // Added Joining Date
 
@@ -612,6 +631,11 @@ export default function SuperEmployeeDashboard() {
               }
           }
 
+          earnedDays += earned;
+          if (isWeekend || isHoliday || hoursForPay >= 3) {
+             presentDaysCount += 1;
+          }
+
       }
     }); // End of monthlyRecords loop
 
@@ -743,7 +767,9 @@ export default function SuperEmployeeDashboard() {
     // No boosting. Discrepancy is handled by straight sum.
 
     // Rule: Overtime CAP.
-    effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount);
+    // Rule: Overtime CAP.
+    // Earned Days cannot exceed Present Days count.
+    // effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount); // DISABLED to match Admin Strict Logic
 
     // New Formula: (Present Days + Unworked Weekends + Unworked Holidays)
     let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount;
@@ -764,7 +790,8 @@ export default function SuperEmployeeDashboard() {
     let payableSalary = daysForPay * dailyRate;
     
     // Incentive
-    const incentiveAmount = 0; // incentives not yet implemented in Super Dashboard
+    const monthlyIncentives = incentives.filter(inc => inc.month === selectedMonth.format("YYYY-MM"));
+    const incentiveAmount = monthlyIncentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
     payableSalary += incentiveAmount;
 
     if (presentDaysCount === 0 && paidLeavesCount === 0) {
@@ -797,7 +824,8 @@ export default function SuperEmployeeDashboard() {
       grantedShortageDates: currentMonthAdj.grantedShortageDates || [],
       // Net Earning Days Logic
       netEarningDays: daysForPay,
-      daysInMonth: selectedMonth.daysInMonth()
+      daysInMonth: selectedMonth.daysInMonth(),
+      creditBank, // Export creditBank
     };
   };
 
@@ -887,8 +915,8 @@ export default function SuperEmployeeDashboard() {
                   <Statistic 
                     title="Net Earned" 
                     value={payroll.netEarningDays} 
-                    suffix={`/ ${payroll.daysInMonth}`}
-                    valueStyle={{ fontSize: 16, fontWeight: 600, color: "#52c41a" }} 
+                    suffix={`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+                    valueStyle={{ fontSize: 16, fontWeight: 600, color: payroll.netEarningDays < payroll.daysInMonth ? "#cf1322" : "#3f8600" }} 
                   />
               </Col>
               <Col xs={12} sm={3}>
@@ -1260,7 +1288,7 @@ export default function SuperEmployeeDashboard() {
 
 
     /* ================= COMPUTED DATA ================= */
-  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate, adjustments]);
+  const payroll = React.useMemo(() => getMonthlyPayroll(records), [records, selectedMonth, holidays, joiningDate, adjustments, incentives]);
   
   const dataSource = React.useMemo(() => {
       // 1. Process existing records
