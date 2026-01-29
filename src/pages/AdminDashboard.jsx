@@ -2100,7 +2100,9 @@ export default function AdminDashboard() {
                           const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
                           
                           let bg = "";
-                          if (record.isLeave) {
+                          if (record.isEdited) {
+                              bg = darkMode ? "rgba(114, 46, 209, 0.15)" : "#f9f0ff"; // Purple for Edited
+                          } else if (record.isLeave) {
                               if (record.leaveType === 'Paid') bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
                               else bg = darkMode ? "#333" : "#fafafa";
                           } else if (isWeekend) bg = darkMode ? "rgba(212, 177, 6, 0.15)" : "#fffbf0"; 

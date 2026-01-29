@@ -1429,6 +1429,8 @@ export default function EmployeeDashboard() {
                 let bg = "";
                 if (record.isMissing) {
                     bg = darkMode ? "rgba(255, 77, 79, 0.1)" : "#ffeae8"; // Lighter red for missing
+                } else if (record.isEdited) {
+                    bg = darkMode ? "rgba(114, 46, 209, 0.15)" : "#f9f0ff"; // Purple for Edited
                 } else if (record.isLeave) {
                    if (record.leaveType === 'Paid') bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
                    else bg = darkMode ? "#333" : "#fafafa";
