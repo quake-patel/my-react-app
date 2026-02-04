@@ -1,7 +1,8 @@
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getDatabase } from "firebase/database";
+// import { getDatabase } from "firebase/database";
 import { initializeApp } from "firebase/app";
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -19,4 +20,4 @@ setPersistence(auth, browserLocalPersistence).catch((error) => {
 });
 
 export const db = getFirestore(app);
-export const realtimeDb = getDatabase(app);
+// export const realtimeDb = getDatabase(app);

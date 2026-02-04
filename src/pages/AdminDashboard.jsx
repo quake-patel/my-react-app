@@ -29,7 +29,8 @@ import {
   Radio,
   Space,
   Dropdown,
-  Menu
+  Menu,
+  Tooltip
 } from "antd";
 
 
@@ -60,8 +61,7 @@ import customParseFormat from "dayjs/plugin/customParseFormat";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
 import { db, auth } from "../firebase";
 import { collection, addDoc, getDocs, updateDoc, doc, deleteDoc, setDoc, getDoc, query, where } from "firebase/firestore";
-import { ref, get, child } from "firebase/database"; // Realtime DB imports
-import { realtimeDb } from "../firebase"; // Realtime DB instance
+
 
 import { signOut } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
@@ -232,7 +232,7 @@ const DEFAULT_HOLIDAYS = [
 
 export default function AdminDashboard() {
   const [records, setRecords] = useState([]);
-  const [syncing, setSyncing] = useState(false);
+
   const [uploading, setUploading] = useState(false);
   const [viewMode, setViewMode] = useState("table");
   const [editOpen, setEditOpen] = useState(false);
@@ -439,24 +439,21 @@ export default function AdminDashboard() {
           
           let date = getField(row, ["Date"]);
           
-          // CRITICAL FIX: Date Parsing Priority
-          // CSV shows "1/15/2024" -> Month/Day/Year. 
-          // Previous priority "DD-MM" caused "02/05" to be May 2nd (05/02) instead of Feb 5th.
-          // Fix: Prioritize DD-MM-YYYY for India/UK formats (Project Standard)
-          const formats = [
-              "DD-MM-YYYY", 
-              "DD/MM/YYYY",
-              "MM-DD-YYYY", 
-              "MM/DD/YYYY", 
-              "M/D/YYYY", 
-              "M-D-YYYY", 
-              "YYYY-MM-DD"
-          ];
-          
-          let d = dayjs(date, formats, true); // Strict mode helps avoid guessing, but might fail on loose formats. Trying true.
-          if (!d.isValid()) {
-             d = dayjs(date, formats, false); // Fallback to loose
-          }
+          // CRITICAL FIX: Date Parsing Priority - STRICT
+        // User Requirement: CSV date format is strictly dd-mm-yyyy
+        const formats = [
+            "DD-MM-YYYY", 
+            "D-M-YYYY",
+            "DD/MM/YYYY",
+            "D/M/YYYY",
+            "YYYY-MM-DD"
+        ];
+        
+        // Strict parsing first to respect the requested format
+        let d = dayjs(date, formats, true); 
+        if (!d.isValid()) {
+           d = dayjs(date, formats, false); // Fallback to loose if strictly invalid
+        }  
           
           if (d.isValid()) {
              // Heuristic: If year is clearly wrong (e.g. 2001 default), maybe fix? 
@@ -546,106 +543,7 @@ export default function AdminDashboard() {
     return false;
   };
 
-  /* ================= DEVICE SYNC (RTDB) ================= */
-  const handleSyncFromDevice = async () => {
-    setSyncing(true);
-    try {
-      const dbRef = ref(realtimeDb);
-      const snapshot = await get(child(dbRef, `attendance`));
 
-      if (snapshot.exists()) {
-        const rawData = snapshot.val();
-        // Group by Employee + Date
-        const grouped = {};
-
-        Object.values(rawData).forEach(record => {
-          const empId = record.EMP_CODE;
-          const rawDate = record.PUNCH_DATE; // e.g., "16-10-2025"
-          const time = record.PUNCH_TIME; // e.g., "16:26:56"
-
-          if (!empId || !rawDate || !time) return;
-
-          // Parse Date to YYYY-MM-DD
-          const d = dayjs(rawDate, ["DD-MM-YYYY", "YYYY-MM-DD", "MM-DD-YYYY"], false);
-          if (!d.isValid()) return;
-          const dateKey = d.format("YYYY-MM-DD");
-
-          const key = `${empId}_${dateKey}`;
-          if (!grouped[key]) {
-            grouped[key] = {
-              employeeId: empId,
-              date: dateKey,
-              times: [],
-              name: `${record.FIRST_NAME || ''} ${record.LAST_NAME || ''}`.trim()
-            };
-          }
-          // Parse Time to HH:mm
-          const t = time.substring(0, 5); // "16:26"
-          if (!grouped[key].times.includes(t)) {
-             grouped[key].times.push(t);
-          }
-        });
-
-        let successCount = 0;
-        const updates = Object.values(grouped).map(async (group) => {
-            // Generate IDs
-            const safeEmpId = (group.employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
-            const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
-            const uniqueId = `${safeEmpId}_${safeDate}`;
-
-            const docRef = doc(db, "punches", uniqueId);
-            const docSnap = await getDoc(docRef);
-
-            // MERGE LOGIC: Combine existing times with new times
-            let finalTimes = [...group.times];
-            let isEdited = false;
-
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                const existingTimes = data.punchTimes || [];
-                isEdited = data.isEdited || false;
-                
-                // Combine and Deduplicate
-                finalTimes = [...new Set([...existingTimes, ...group.times])];
-            }
-            
-            // Sort times for correct IN/OUT calc
-            finalTimes.sort();
-            
-            const { inTime, outTime, totalHours } = calculateTimes(finalTimes);
-
-            const docData = {
-                employeeId: group.employeeId,
-                employee: group.name ? `${group.name} (${group.employeeId})` : group.employeeId,
-                date: group.date,
-                numberOfPunches: finalTimes.length,
-                punchTimes: finalTimes,
-                inTime,
-                outTime,
-                hours: totalHours,
-                syncedAt: new Date().toISOString(),
-                source: 'device_sync',
-                isEdited // Preserve edited status if it was already edited
-            };
-
-            // Merge true to update existing records without wiping other fields
-            await setDoc(docRef, docData, { merge: true });
-            successCount++;
-        });
-
-        await Promise.all(updates);
-        message.success(`Synced ${successCount} daily records from Device!`);
-        fetchData(); // Refresh View
-
-      } else {
-        message.info("No data available in Device Database");
-      }
-    } catch (error) {
-      console.error(error);
-      message.error("Failed to sync from device");
-    }
-    setSyncing(false);
-  };
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -1881,14 +1779,30 @@ export default function AdminDashboard() {
               dataIndex: ["sortedPunches", i * 2],
               width: 90,
               align: "center",
-              render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span>
+              render: (t, r) => {
+                const isHighlighted = (r.highlightedTimes || []).includes(t) && t;
+                const comment = (r.highlightComments || {})[t];
+                return isHighlighted ? (
+                    <Tooltip title={comment || "Highlighted"}>
+                        <span style={{ background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black', cursor: 'pointer' }}>{t}</span>
+                    </Tooltip>
+                ) : t;
+              }
           });
           punchCols.push({
               title: `Out ${i + 1}`,
               dataIndex: ["sortedPunches", i * 2 + 1],
               width: 90,
               align: "center",
-              render: (t, r) => <span style={(r.highlightedTimes || []).includes(t) && t ? { background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black' } : {}}>{t}</span>
+              render: (t, r) => {
+                const isHighlighted = (r.highlightedTimes || []).includes(t) && t;
+                const comment = (r.highlightComments || {})[t];
+                return isHighlighted ? (
+                    <Tooltip title={comment || "Highlighted"}>
+                        <span style={{ background: '#fffb8f', fontWeight: 'bold', padding: '2px 4px', borderRadius: 4, color: 'black', cursor: 'pointer' }}>{t}</span>
+                    </Tooltip>
+                ) : t;
+              }
           });
       }
 
@@ -2125,15 +2039,7 @@ export default function AdminDashboard() {
               </Col>
               <Col>
                   <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                      <Button 
-                        icon={<BulbOutlined />}
-                        onClick={handleSyncFromDevice}
-                        loading={syncing}
-                        type="primary"
-                        style={{ background: "#722ed1", borderColor: "#722ed1" }}
-                      >
-                        Sync Device
-                      </Button>
+
                       <Button icon={<ReloadOutlined />} onClick={fetchData}>Refresh</Button>
                       <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
                       <Button icon={<LogoutOutlined />} onClick={handleLogout}>Logout</Button>

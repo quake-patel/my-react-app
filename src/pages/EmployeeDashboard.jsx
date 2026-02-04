@@ -43,8 +43,7 @@ import {
   updateDoc,
   setDoc
 } from "firebase/firestore";
-import { ref, get, child } from "firebase/database"; // Realtime DB imports
-import { realtimeDb } from "../firebase"; // Realtime DB instance
+
 
 import Papa from "papaparse"; // Added Papa
 import { signOut, onAuthStateChanged } from "firebase/auth";
@@ -141,12 +140,18 @@ const calculateTimes = (times) => {
 
 export default function EmployeeDashboard() {
   const [records, setRecords] = useState([]);
-  const [syncing, setSyncing] = useState(false); // NEW
+
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [currentRecord, setCurrentRecord] = useState(null);
   const [userEmail, setUserEmail] = useState(null);
   const [darkMode, setDarkMode] = useState(false);
+  
+  // Highlight Comment State
+  const [highlightModalOpen, setHighlightModalOpen] = useState(false);
+  const [highlightTime, setHighlightTime] = useState(null);
+  const [highlightRecord, setHighlightRecord] = useState(null);
+  const [highlightComment, setHighlightComment] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [chatOpen, setChatOpen] = useState(false);
   const [holidays, setHolidays] = useState([]);
@@ -194,21 +199,21 @@ export default function EmployeeDashboard() {
            const department = getField(row, ["Department", "Dept"]);
            
            let date = getField(row, ["Date"]);
-           // Normalize Date for ID consistency (Admin Logic)
-           // Fix: Prioritize MM/DD/YYYY
-           const formats = [
-               "MM/DD/YYYY", 
-               "M/D/YYYY", 
-               "MM-DD-YYYY", 
-               "M-D-YYYY", 
-               "YYYY-MM-DD", 
-               "DD/MM/YYYY", 
-               "DD-MM-YYYY"
-           ];
-           let d = dayjs(date, formats, true); // Strict Mode
-           if (!d.isValid()) {
-               d = dayjs(date, formats, false);
-           }
+           // Normalize Date for ID consistency (Admin Logic - Updated)
+         // Fix: Strictly Prioritize DD-MM-YYYY as per user request
+         const formats = [
+             "DD-MM-YYYY",
+             "D-M-YYYY", 
+             "DD/MM/YYYY",
+             "D/M/YYYY",
+             "YYYY-MM-DD",
+             "MM-DD-YYYY",
+             "MM/DD/YYYY"
+         ];
+         let d = dayjs(date, formats, true); // Strict Mode
+         if (!d.isValid()) {
+             d = dayjs(date, formats, false);
+         }  
            
            if (d.isValid()) {
                date = d.format("YYYY-MM-DD");
@@ -719,109 +724,7 @@ export default function EmployeeDashboard() {
 
 
 
-  /* ================= DEVICE SYNC (RTDB) ================= */
-  const handleSyncFromDevice = async () => {
-    if (!employeeId) {
-        message.error("Employee ID not found. Cannot sync.");
-        return;
-    }
-    setSyncing(true);
-    try {
-      const dbRef = ref(realtimeDb);
-      const snapshot = await get(child(dbRef, `attendance`));
 
-      if (snapshot.exists()) {
-        const rawData = snapshot.val();
-        // Group by Employee + Date
-        const grouped = {};
-
-        Object.values(rawData).forEach(record => {
-          const empId = record.EMP_CODE;
-          
-          // SAFETY FILTER FOR EMPLOYEE DASHBOARD: ONLY CURRENT USER
-          if (String(empId) !== String(employeeId)) return;
-
-          const rawDate = record.PUNCH_DATE; // e.g., "16-10-2025"
-          const time = record.PUNCH_TIME; // e.g., "16:26:56"
-
-          if (!empId || !rawDate || !time) return;
-
-          // Parse Date to YYYY-MM-DD
-          const d = dayjs(rawDate, ["DD-MM-YYYY", "YYYY-MM-DD", "MM-DD-YYYY"], false);
-          if (!d.isValid()) return;
-          const dateKey = d.format("YYYY-MM-DD");
-
-          const key = `${empId}_${dateKey}`;
-          if (!grouped[key]) {
-            grouped[key] = {
-              employeeId: empId,
-              date: dateKey,
-              times: [],
-              name: `${record.FIRST_NAME || ''} ${record.LAST_NAME || ''}`.trim()
-            };
-          }
-          // Parse Time to HH:mm
-          const t = time.substring(0, 5); // "16:26"
-          if (!grouped[key].times.includes(t)) {
-             grouped[key].times.push(t);
-          }
-        });
-
-        let successCount = 0;
-        const updates = Object.values(grouped).map(async (group) => {
-            // Sort times for correct IN/OUT calc
-            group.times.sort();
-            
-            const { inTime, outTime, totalHours } = calculateTimes(group.times);
-            
-            // Generate IDs
-            const safeEmpId = (group.employeeId || "").replace(/[^a-zA-Z0-9]/g, "_");
-            const safeDate = (group.date || "").replace(/[^a-zA-Z0-9-]/g, "_");
-            const uniqueId = `${safeEmpId}_${safeDate}`;
-
-            // Check if record exists and is manually edited
-            const docRef = doc(db, "punches", uniqueId);
-            const docSnap = await getDoc(docRef);
-
-            if (docSnap.exists() && docSnap.data().isEdited) {
-                return; // Skip overwriting manually edited records
-            }
-
-            const docData = {
-                employeeId: group.employeeId,
-                employee: group.name ? `${group.name} (${group.employeeId})` : group.employeeId,
-                date: group.date,
-                numberOfPunches: group.times.length,
-                punchTimes: group.times,
-                inTime,
-                outTime,
-                hours: totalHours,
-                syncedAt: new Date().toISOString(),
-                source: 'device_sync'
-            };
-
-            // Merge true to update existing records without wiping other fields
-            await setDoc(docRef, docData, { merge: true });
-            successCount++;
-        });
-
-        await Promise.all(updates);
-        if (successCount > 0) {
-            message.success(`Synced ${successCount} records!`);
-            fetchMyData(); // Refresh View
-        } else {
-            message.info("No matching records found on device.");
-        }
-
-      } else {
-        message.info("No data available in Device Database");
-      }
-    } catch (error) {
-      console.error(error);
-      message.error("Failed to sync from device");
-    }
-    setSyncing(false);
-  };
 
   /* ================= RENDER HELPERS ================= */
   const renderPayrollStats = (payroll, darkMode) => (
@@ -1127,28 +1030,85 @@ export default function EmployeeDashboard() {
     return d.isValid() ? d.format("dddd, MMMM DD, YYYY") : dateStr;
   };
 
-  /* ================= HIGHLIGHT LOGIC ================= */
+  /* ================= COMMENT/HIGHLIGHT LOGIC ================= */
   const toggleHighlight = async (record, timeVal) => {
     if (!timeVal) return;
-    try {
-      const currentHighlights = record.highlightedTimes || [];
-      let newHighlights;
-      if (currentHighlights.includes(timeVal)) {
-        newHighlights = currentHighlights.filter(t => t !== timeVal);
-      } else {
-        newHighlights = [...currentHighlights, timeVal];
-      }
-      
-      await updateDoc(doc(db, "punches", record.id), {
-        highlightedTimes: newHighlights
-      });
-      message.success("Time highlight updated");
-      fetchMyData(); 
-    } catch (e) {
-      console.error(e);
-      message.error("Failed to update highlight");
-    }
+    setHighlightRecord(record);
+    setHighlightTime(timeVal);
+    
+    // Check if already highlighted/commented
+    const currentComments = record.highlightComments || {};
+    const existingComment = currentComments[timeVal] || "";
+    
+    setHighlightComment(existingComment);
+    setHighlightModalOpen(true);
   };
+  
+  const handleSaveHighlight = async () => {
+      if (!highlightRecord || !highlightTime) return;
+      
+      try {
+          const docRef = doc(db, "punches", highlightRecord.id);
+          const currentHighlights = highlightRecord.highlightedTimes || [];
+          const currentComments = highlightRecord.highlightComments || {};
+          
+          let newHighlights = [...currentHighlights];
+          let newComments = { ...currentComments };
+          
+          const trimmedComment = highlightComment.trim();
+
+          if (trimmedComment) {
+              // ADD/UPDATE
+              if (!newHighlights.includes(highlightTime)) {
+                  newHighlights.push(highlightTime);
+              }
+              newComments[highlightTime] = trimmedComment;
+          } else {
+              // REMOVE if empty (Enforce Comment for Highlight)
+              newHighlights = newHighlights.filter(t => t !== highlightTime);
+              delete newComments[highlightTime];
+          }
+          
+          await updateDoc(docRef, {
+              highlightedTimes: newHighlights,
+              highlightComments: newComments
+          });
+          
+          message.success(trimmedComment ? "Comment saved" : "Comment removed");
+          setHighlightModalOpen(false);
+          fetchMyData();
+      } catch (e) {
+          console.error(e);
+          message.error("Failed to save comment");
+      }
+  };
+
+  const handleRemoveHighlight = async () => {
+      if (!highlightRecord || !highlightTime) return;
+       try {
+          const docRef = doc(db, "punches", highlightRecord.id);
+          const currentHighlights = highlightRecord.highlightedTimes || [];
+          const currentComments = highlightRecord.highlightComments || {};
+          
+          const newHighlights = currentHighlights.filter(t => t !== highlightTime);
+          const newComments = { ...currentComments };
+          delete newComments[highlightTime];
+          
+          await updateDoc(docRef, {
+              highlightedTimes: newHighlights,
+              highlightComments: newComments
+          });
+          
+          message.success("Comment removed");
+          setHighlightModalOpen(false);
+          fetchMyData();
+      } catch (e) {
+          console.error(e);
+          message.error("Failed to remove comment");
+      }
+  };
+
+
 
   /* ================= COMPUTED DATA ================= */
   // Removed duplicate payroll declaration
@@ -1374,15 +1334,7 @@ export default function EmployeeDashboard() {
               checkedChildren="Dark"
               unCheckedChildren="Light"
             />
-            <Button 
-                icon={<BulbOutlined />} 
-                onClick={handleSyncFromDevice}
-                loading={syncing}
-                type="primary"
-                style={{ background: "#722ed1", borderColor: "#722ed1" }}
-            >
-                Sync Device
-            </Button>
+
             <Button icon={<ReloadOutlined />} onClick={() => { fetchMyData(); fetchHolidays(); }}>
               Refresh
             </Button>
@@ -1528,6 +1480,26 @@ export default function EmployeeDashboard() {
                 onChange={e => setRequestReason(e.target.value)}
               />
           </div>
+      </Modal>
+
+      {/* HIGHLIGHT COMMENT MODAL - RENAMED TO ADD COMMENT */}
+      <Modal
+        title={`Add Comment for: ${highlightTime}`}
+        open={highlightModalOpen}
+        onCancel={() => setHighlightModalOpen(false)}
+        footer={[
+            <Button key="remove" danger onClick={handleRemoveHighlight}>Remove Comment</Button>,
+            <Button key="cancel" onClick={() => setHighlightModalOpen(false)}>Cancel</Button>,
+            <Button key="save" type="primary" onClick={handleSaveHighlight}>Save Comment</Button>
+        ]}
+      >
+          <p>Add a note/comment for this specific time entry. This will be visible to Admin.</p>
+          <Input.TextArea 
+            rows={3} 
+            placeholder="Type your comment here..."
+            value={highlightComment}
+            onChange={e => setHighlightComment(e.target.value)}
+          />
       </Modal>
     </ConfigProvider>
   );
