@@ -52,8 +52,10 @@ import {
   CheckOutlined,
   CloseOutlined,
   AuditOutlined,
-  MessageOutlined
+  MessageOutlined,
+  FileExcelOutlined
 } from "@ant-design/icons";
+import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import dayjs from "dayjs";
 import ChatDrawer from "../components/ChatDrawer";
@@ -557,6 +559,47 @@ export default function AdminDashboard() {
   };
   
   /* ================= SALARY & PROFILE MANAGEMENT ================= */
+  const handleDownloadSalarySheet = () => {
+    // 1. Filter Records for Selected Month
+    const monthRecords = records.filter(r => {
+        if (!r.date) return false;
+        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], true);
+        return d.isValid() && d.isSame(selectedMonth, 'month');
+    });
+
+    // 2. Group by Employee
+    const groups = groupByEmployee(monthRecords, employees);
+
+    // 3. Build Excel Data
+    const data = [];
+    const monthStr = selectedMonth.format("D-MMM-YYYY");
+    const daysInMonth = selectedMonth.daysInMonth();
+
+    Object.values(groups).forEach(emp => {
+        const payroll = getMonthlyPayroll(emp.records, emp.employeeId, emp.joiningDate);
+        
+        // Data Mapping based on Screenshot
+        // Columns: Month | Total Days | Employee | Net Earning Days | Base Salary | Final Salary | Salary Notes
+        data.push({
+            "Month": monthStr,
+            "Total Days": daysInMonth,
+            "Employee": emp.employeeName,
+            "Net Earning Days": payroll.netEarningDays,
+            "Base Salary": payroll.monthlySalary,
+            "Final Salary": payroll.payableSalary, // Using calculated payable salary (includes incentives)
+            "Salary Notes": `${emp.employeeName.replace(/\s*\(\d+\)/, '')} Sal ${selectedMonth.format("MMMYY")}`
+        });
+    });
+
+    // 4. Generate Excel
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Salary Master Sheet");
+    
+    // 5. Download
+    XLSX.writeFile(workbook, `Salary_Master_Sheet_${selectedMonth.format("MMM_YYYY")}.xlsx`);
+  };
+
   const handleManageSalaries = () => {
       fetchSalaries();
       fetchIncentives();
@@ -2074,6 +2117,7 @@ export default function AdminDashboard() {
                         {showSalary ? "Hide Revenue" : "Show Revenue"}
                     </Button>
                     <Button icon={<DollarOutlined />} onClick={handleManageSalaries}>Manage Salaries</Button>
+                    <Button icon={<FileExcelOutlined />} onClick={handleDownloadSalarySheet} style={{ background: "#207e3a", color: "white", borderColor: "#207e3a" }}>Download Sheet</Button>
                 </div>
             </Col>
             <Col xs={24} lg={8} style={{ textAlign: 'right' }}>
