@@ -1,0 +1,544 @@
+{
+  "FormData": [
+    {
+      "id": "SubnetVAI_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Select the Vertex AI subnet name.",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Vertex AI Subnet Name",
+        "dataType": "text",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 8,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "subnet_region_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Select the Vertex AI subnet region.",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Vertex AI Subnet Region",
+        "dataType": "text",
+        "lookupValue": "SubnetRegions",
+        "isHidden": true,
+        "isDisabled": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false,
+        "minLength": 8,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "subnet_location_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Select the Vertex AI subnet zone. Zone should be in the same region as the region selected.",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Vertex AI Subnet Zone",
+        "dataType": "text",
+        "lookupValue": "SubnetLocations",
+        "checkWorkbenchValidity": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 8,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "name_pdev",
+      "descriptionId": "resource_name",
+      "summaryfield": true,
+      "fieldInfo": "Enter a name for the Cluster between 6 and 20 characters long. This name should be unique for a given project. Min length=6, Max length=20, Only accepts letters, numbers, and hyphens",
+      "type": "input",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Vertex AI Workbench Name",
+        "dataType": "text",
+        "checkWorkbenchValidity": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 6,
+        "maxLength": 20,
+        "pattern": "/^(?!-)[A-Za-z0-9-]+$/"
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "service_name_pdev",
+      "value": "",
+      "type": "input",
+      "valid": false,
+      "config": {
+        "label": "Service Name",
+        "dataType": "text",
+        "isHidden": true,
+        "validateForDuplicate": true,
+        "basedOn": [
+          "name"
+        ],
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "framework_pdev",
+      "type": "select",
+      "fieldInfo": "Select Vertex AI framework. Refer to this link for more information: linkTo:https://cloud.google.com/vertex-ai/docs/supported-frameworks-list#custom_training @url: https://cloud.google.com/vertex-ai/docs/supported-frameworks-list#custom_training",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Framework",
+        "dataType": "text",
+        "lookupValue": "VertexAiFramework",
+        "isDisabled": true,
+        "isHidden": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "machine_type_pdev",
+      "fieldInfo": "Specify the machine type. Refer to this link to get the details of each machine type supported: linkTo:https://cloud.google.com/compute/docs/general-purpose-machines#n1_machines @url: https://cloud.google.com/compute/docs/general-purpose-machines#n1_machines",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Machine Type",
+        "dataType": "text",
+        "lookupValue": "VertexAiMachineType",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 3,
+        "maxLength": 30
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "provision_gpu_pdev",
+      "type": "input",
+      "fieldInfo": "Provision instance with GPU?",
+      "altText": "provision instance with GPU",
+      "valid": true,
+      "value": "no",
+      "config": {
+        "label": "Provision Instance with GPU.?",
+        "dataType": "checkbox",
+        "isDisabled": false,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "accelerator_config_type_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Select the Accelerator Config Type to be charged for this resource.",
+      "type": "select",
+      "valid": false,
+      "value": "ACCELERATOR_TYPE_UNSPECIFIED",
+      "config": {
+        "label": "Accelerator Config Type",
+        "dataType": "text",
+        "lookupValue": "VertexAiAcceleratorType",
+        "isDisabled": true,
+        "isHidden": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false,
+        "minLength": 3,
+        "maxLength": 30
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "Labels_pdev-header",
+      "type": "heading",
+      "value": "Labels",
+      "config": {
+        "appendToTableData": "project_environment_pdev"
+      }
+    },
+    {
+      "id": "cvsappid_pdev",
+      "mappingId": "cvsappid",
+      "groupingLabels": "resource_label",
+      "summaryfield": true,
+      "fieldInfo": "APP ID of the application as listed in APM. Should begin with \"APM\". Only alphanumeric, hyphen( - ) and underscore( _ ) are allowed. Minimum length=3, Maximum length=64",
+      "type": "autocomplete",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "CVS App ID (APM Id)",
+        "dataType": "text",
+        "checkItpmValidity": true,
+        "isDebouncedCall": true,
+        "populateValueOf": [
+          "applicationname",
+          "owner",
+          "itpmid"
+        ],
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 3
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "costcenter_pdev",
+      "type": "autocomplete",
+      "fieldInfo": "Cost center will be applied as a project label and is used for ongoing cloud costs associated to this project. If your value is not in the dropdown, please contact FinOps <FinOpsandSecurity@CVSHealth.com>. Minimum 5 digits. The tenant or use-case owner`s cost center for billing and resource utilization. If you`re not sure, ask your business team, delivery lead, or manager.",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Cost Center",
+        "dataType": "number",
+        "checkCostCenterValidity": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 5,
+        "maxLength": 63,
+        "min": 0,
+        "pattern": "/^(?!.*--)[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?(?<![-])$/"
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "applicationname_pdev",
+      "mappingId": "applicationname",
+      "groupingLabels": "resource_label",
+      "summaryfield": true,
+      "fieldInfo": "The name of the application as listed in APM. Only alphanumeric, hyphen( - ) and underscore( _ ) are allowed. It should not end with '-'. Minimum length=3, Maximum length=63",
+      "type": "input",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "APM Application Name",
+        "dataType": "text",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 3,
+        "maxLength": 63
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "itpmid_pdev",
+      "mappingId": "itpmid",
+      "groupingLabels": "resource_label",
+      "type": "input",
+      "fieldInfo": "The Correlation ID of the application as listed in APM. Only alphanumeric, hyphen( - ) and underscore( _ ) are allowed. Minimum length=10, Maximum length=17",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "APM Correlation ID",
+        "dataType": "text",
+        "isHidden": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false,
+        "minLength": 10,
+        "maxLength": 17
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "owner_pdev",
+      "mappingId": "owner",
+      "groupingLabels": "resource_label",
+      "type": "input",
+      "fieldInfo": "The owner of the resource we can contact in the event a vulnerability needs to be addressed or an approval is needed to make a change that could impact this resource. Minimum length=5",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Name of the project resource owner",
+        "dataType": "text",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 5
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "environmenttype_pdev",
+      "mappingId": "environmenttype",
+      "groupingLabels": "resource_label",
+      "summaryfield": true,
+      "fieldInfo": "Type of Environment in which the project resides.",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Environment Type",
+        "dataType": "text",
+        "lookupValue": "BQDatasetEnvType",
+        "isHidden": true,
+        "isDisabled": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "project_environment_pdev",
+      "mappingId": "environmentsubtype",
+      "groupingLabels": "resource_label",
+      "summaryfield": true,
+      "fieldInfo": "E.g. Dev, QA. This will be part of the project name.",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Environment (Second part of project name)",
+        "dataType": "text",
+        "isHidden": true,
+        "lookupValue": "ServiceEnvironment",
+        "isDisabled": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "provisioned_by_pdev",
+      "mappingId": "provisioned_by",
+      "groupingLabels": "resource_label",
+      "summaryfield": true,
+      "fieldInfo": "Provisioned by.",
+      "type": "select",
+      "valid": false,
+      "value": "PRIME",
+      "config": {
+        "label": "GCP Tenancy",
+        "dataType": "text",
+        "isDisabled": true,
+        "isHidden": true,
+        "lookupValue": "Tenancy",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "shared_email_address_pdev",
+      "mappingId": "sharedemailaddress",
+      "groupingLabels": "resource_label",
+      "type": "input",
+      "fieldInfo": "Enter the Shared email address. Minimum length=5",
+      "valid": false,
+      "value": "",
+      "toBeCloned": true,
+      "config": {
+        "label": "Shared Email Address(Email distribution list or email of the resource owner)",
+        "unlike": "solution_engineer_email",
+        "dataType": "email",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 5
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "IAM_pdev-header",
+      "type": "heading",
+      "value": "Instance Level IAM permissions",
+      "config": {
+        "appendToTableData": "project_environment_pdev"
+      }
+    },
+    {
+      "id": "runner_iam_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Provide ADGroup that needs start and stop permissions on the notebook. This ADGroup will also get service account user role on service account",
+      "type": "input",
+      "valid": true,
+      "value": "",
+      "config": {
+        "label": "ADGroup (This ADGroup will be given permissions to run the notebook using service account)",
+        "dataType": "email",
+        "checkAdValidity": true,
+        "executeMemberValidation": "runner_iam_email",
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 3,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "runner_iam_email_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Provide an individual user’s email id if this notebook is created specifically for an individual. This email id will be made as the owner of the notebook and notebook cannot be shared by other users",
+      "type": "input",
+      "valid": true,
+      "value": "",
+      "config": {
+        "label": "Owner Email (Provide an individual user’s email id if this notebook is created specifically for an individual)",
+        "dataType": "email",
+        "checkEmailValidity": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false,
+        "minLength": 3,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "pipeline_service_account_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Provide the Service Account which has permissions on the project to run the code",
+      "type": "input",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Service Account",
+        "dataType": "email",
+        "checkSaValidity": true,
+        "validateANBCList": true,
+        "ignoreServiceOps": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true,
+        "minLength": 8,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "runner_type_pdev",
+      "summaryfield": true,
+      "fieldInfo": "Select the Instance IAM Member Type: group or individual user",
+      "type": "select",
+      "valid": false,
+      "value": "",
+      "config": {
+        "label": "Instance IAM Member Type",
+        "dataType": "text",
+        "lookupValue": "IamTypes",
+        "isHidden": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false,
+        "minLength": 3,
+        "maxLength": 100
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "iam_provisioning_required_pdev",
+      "type": "input",
+      "fieldInfo": "IAM provisioning required?",
+      "valid": false,
+      "value": "yes",
+      "config": {
+        "label": "IAM provisioning required?",
+        "dataType": "checkbox",
+        "isDisabled": true,
+        "isHidden": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": false
+      },
+      "errorMessage": ""
+    },
+    {
+      "id": "service_api_name_pdev",
+      "mappingId": "service_api_name",
+      "summaryfield": true,
+      "fieldInfo": "Service API Name",
+      "type": "input",
+      "valid": false,
+      "value": "notebooks",
+      "config": {
+        "label": "Service API Name",
+        "dataType": "text",
+        "isDisabled": true,
+        "isHidden": true,
+        "appendToTableData": "project_environment_pdev"
+      },
+      "touched": false,
+      "validation": {
+        "required": true
+      },
+      "errorMessage": ""
+    }
+  ]
+}

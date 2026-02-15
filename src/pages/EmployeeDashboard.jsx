@@ -604,11 +604,15 @@ export default function EmployeeDashboard() {
     let sCurr = start.clone();
     let unworkedWeekendCount = 0;
 
+
+
+    const cutoffDate = dayjs();
+
     while (sCurr.isSameOrBefore(end)) {
         const dayStr = sCurr.format("YYYY-MM-DD");
         if (sCurr.day() === 6 || sCurr.day() === 0) { // Weekend
              // Count for Pay if NOT WORKED (Prevent Double Count)
-             if (!recordedDates.includes(dayStr)) {
+             if (!recordedDates.includes(dayStr) && sCurr.isSameOrBefore(cutoffDate, 'day')) {
                  unworkedWeekendCount++;
              }
 
@@ -616,12 +620,13 @@ export default function EmployeeDashboard() {
                  const saturday = sCurr;
                  const sunday = sCurr.add(1, 'day');
                  
+
                  const fridayStr = saturday.subtract(1, 'day').format("YYYY-MM-DD");
                  const mondayStr = saturday.add(2, 'day').format("YYYY-MM-DD");
                  
                  const isFriAbsent = missingDays.includes(fridayStr);
                  const isMonAbsent = missingDays.includes(mondayStr);
-                 
+
                  if (isFriAbsent && isMonAbsent) {
                      if (saturday.month() === selectedMonth.month()) {
                          sandwichDays.push(saturday.format("YYYY-MM-DD"));
@@ -649,7 +654,7 @@ export default function EmployeeDashboard() {
         const isWeekend = day === 0 || day === 6;
         if (!isWeekend && holidayDates.includes(dayStr)) {
             // Only count if NOT WORKED
-            if (!recordedDates.includes(dayStr)) {
+            if (!recordedDates.includes(dayStr) && hCurr.isSameOrBefore(cutoffDate, 'day')) {
                unworkedHolidayCount++;
             }
         }
@@ -738,10 +743,8 @@ export default function EmployeeDashboard() {
       }}>
           {/* COMPACT STATS ROW */}
           <Row gutter={[16, 16]} align="middle">
-              <Col xs={12} sm={3}>
-                  <Statistic title="Working Days" value={payroll.workingDays} valueStyle={{ fontSize: 16, fontWeight: 600 }} />
-              </Col>
-              <Col xs={12} sm={3}>
+
+              <Col xs={12} sm={5}>
                   <Statistic 
                     title="Net Earned" 
                     value={payroll.netEarningDays} 
@@ -749,7 +752,7 @@ export default function EmployeeDashboard() {
                     valueStyle={{ fontSize: 16, fontWeight: 600, color: payroll.netEarningDays < payroll.daysInMonth ? "#cf1322" : "#3f8600" }} 
                   />
               </Col>
-              <Col xs={12} sm={3}>
+              <Col xs={12} sm={4}>
                   <Statistic 
                     title="Passed Days" 
                     value={payroll.passedWorkingDays} 
@@ -757,7 +760,7 @@ export default function EmployeeDashboard() {
                     valueStyle={{ fontSize: 16, fontWeight: 600, color: "#722ed1" }} 
                   />
               </Col>
-              <Col xs={12} sm={3}>
+              <Col xs={12} sm={4}>
                    <Statistic 
                     title="Leaves" 
                     value={Math.max(0, payroll.totalLeaves)} 
@@ -765,7 +768,7 @@ export default function EmployeeDashboard() {
                     suffix={payroll.paidLeavesCount > 0 ? <span style={{fontSize:11, color:'#888', marginLeft:5}}>(-{payroll.paidLeavesCount} Pd)</span> : null}
                   />
               </Col>
-              <Col xs={12} sm={4}>
+              <Col xs={12} sm={5}>
                   <Statistic 
                     title="Present Hours" 
                     value={payroll.passedEligibleHours.toFixed(2)} 
@@ -773,7 +776,7 @@ export default function EmployeeDashboard() {
                     valueStyle={{ fontSize: 16, fontWeight: 600, color: "#1890ff" }} 
                   />
               </Col>
-              <Col xs={12} sm={4}>
+              <Col xs={12} sm={6}>
                   <Statistic 
                     title="Hours Short by" 
                     value={Math.abs(payroll.passedDifference).toFixed(2)} 
@@ -808,55 +811,7 @@ export default function EmployeeDashboard() {
                     </Col>
                   )}
 
-                  {/* Short Days */}
-                  {payroll.shortDays && payroll.shortDays.length > 0 && (
-                    <Col xs={24} md={12} lg={8}>
-                        <div style={{ marginBottom: 6, color: "#fa8c16", fontWeight: 600, fontSize: 13 }}>
-                            Short Days ({payroll.shortDays.length})
-                        </div>
-                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
-                            {payroll.shortDays.map(sd => (
-                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #fa8c16", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', color: darkMode ? '#fff' : 'inherit' }}>
-                                    <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
-                                    <span style={{ color: "#fa8c16" }}>- {formatDuration(sd.shortage)}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </Col>
-                  )}
 
-                  {/* Low Hours */}
-                  {payroll.zeroDays && payroll.zeroDays.length > 0 && (
-                    <Col xs={24} md={12} lg={8}>
-                        <div style={{ marginBottom: 6, color: "#cf1322", fontWeight: 600, fontSize: 13 }}>
-                            Low Hours ({payroll.zeroDays.length})
-                        </div>
-                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
-                            {payroll.zeroDays.map(sd => (
-                                <div key={sd.date} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #cf1322", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: darkMode ? '#fff' : 'inherit' }}>
-                                    <span>{sd.date} ({sd.dailyHours.toFixed(2)}h)</span>
-                                    <Button type="primary" size="small" onClick={() => openRequestModal(sd.date, 'Missing Entry Correction')} style={{height: 22, fontSize: 11}}>Request</Button>
-                                </div>
-                            ))}
-                        </div>
-                    </Col>
-                  )}
-
-                  {/* Missing Days */}
-                  {payroll.missingDays && payroll.missingDays.length > 0 && (
-                    <Col xs={24} md={12} lg={8}>
-                        <div style={{ marginBottom: 6, color: "#ff4d4f", fontWeight: 600, fontSize: 13 }}>
-                            Absences ({payroll.missingDays.length})
-                        </div>
-                        <div style={{ maxHeight: 200, overflowY: "auto" }}>
-                            {payroll.missingDays.map(dateStr => (
-                                <div key={dateStr} style={{ marginBottom: 4, padding: "4px 8px", border: "1px solid #ff4d4f", borderRadius: 4, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: darkMode ? '#fff' : 'inherit' }}>
-                                    <span>{dateStr}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </Col>
-                  )}
               </Row>
           )}
       </div>
