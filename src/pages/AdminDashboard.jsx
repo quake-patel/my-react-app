@@ -321,7 +321,12 @@ export default function AdminDashboard() {
 
   const fetchData = async () => {
     try {
-      const startOfMonth = selectedMonth.startOf("month").format("YYYY-MM-DD");
+      // MODIFIED: Fetch 7 days prior to handle Sandwich Rule overlap
+      const startOfMonth = selectedMonth
+        .clone()
+        .startOf("month")
+        .subtract(7, "day")
+        .format("YYYY-MM-DD");
       const endOfMonth = selectedMonth.endOf("month").format("YYYY-MM-DD");
 
       // OPTIMIZATION: Query only for the selected month
@@ -1240,6 +1245,10 @@ export default function AdminDashboard() {
 
     // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
     let sCurr = start.clone();
+    // FIX: If month starts on Sunday, we must check the preceding Saturday to trigger the sandwich check
+    if (start.day() === 0) {
+      sCurr = start.subtract(1, "day");
+    }
     let unworkedWeekendCount = 0;
 
 
@@ -1261,11 +1270,57 @@ export default function AdminDashboard() {
           const sunday = sCurr.add(1, "day");
 
 
+          // CHECK ABSENT HELPER
+          // Checks if a date is absent.
+          // For current month: check missingDays
+          // For previous month: check if record exists in `employeeRecords` (which now has history)
+          // If no record, check if weekend/holiday.
+          const checkAbsent = (dateStr) => {
+            const d = dayjs(
+              dateStr,
+              [
+                "YYYY-MM-DD",
+                "DD-MM-YYYY",
+                "MM/DD/YYYY",
+                "DD/MM/YYYY",
+                "YYYY/MM/DD",
+              ],
+              false,
+            );
+            if (!d.isValid()) return false; // Safety
+
+            // If in current month, stick to calculated missingDays
+            if (d.month() === selectedMonth.month()) {
+              return missingDays.includes(dateStr);
+            }
+
+            // Previous Month Logic
+            // 1. Is there a record?
+            // Note: `records` has dates as string properties e.g. "2025-05-30" or we need to standarize
+            // The records come from DB with "YYYY-MM-DD" usually but let's be safe.
+            const hasRecord = records.some((r) => {
+              const rd = dayjs(r.date);
+              return rd.isValid() && rd.isSame(d, "day");
+            });
+
+            if (hasRecord) return false; // Present
+
+            // 2. Is it a Weekend?
+            const day = d.day();
+            if (day === 0 || day === 6) return false; // Weekend (Not Absent)
+
+            // 3. Is it a Holiday?
+            if (holidayDates.includes(dateStr)) return false; // Holiday (Not Absent)
+
+            // Default: Absent
+            return true;
+          };
+
           const fridayStr = saturday.subtract(1, "day").format("YYYY-MM-DD");
           const mondayStr = saturday.add(2, "day").format("YYYY-MM-DD");
 
-          const isFriAbsent = missingDays.includes(fridayStr);
-          const isMonAbsent = missingDays.includes(mondayStr);
+          const isFriAbsent = checkAbsent(fridayStr);
+          const isMonAbsent = checkAbsent(mondayStr);
 
           if (isFriAbsent && isMonAbsent) {
             if (saturday.month() === selectedMonth.month()) {
@@ -1331,9 +1386,7 @@ export default function AdminDashboard() {
     // Safety check: Cannot be negative
     if (payableSalary < 0) payableSalary = 0;
 
-    if (presentDaysCount === 0 && paidLeavesCount === 0) {
-      payableSalary = 0 + incentiveAmount; // Just incentives if any
-    }
+
 
     if (payableSalary < 0) payableSalary = 0;
 

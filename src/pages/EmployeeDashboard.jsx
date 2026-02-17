@@ -602,6 +602,10 @@ export default function EmployeeDashboard() {
     
     // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
     let sCurr = start.clone();
+    // FIX: If month starts on Sunday, we must check the preceding Saturday to trigger the sandwich check
+    if (start.day() === 0) {
+        sCurr = start.subtract(1, 'day');
+    }
     let unworkedWeekendCount = 0;
 
 
@@ -621,11 +625,43 @@ export default function EmployeeDashboard() {
                  const sunday = sCurr.add(1, 'day');
                  
 
+                 // CHECK ABSENT HELPER
+                 const checkAbsent = (dateStr) => {
+                    const d = dayjs(dateStr, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                    if (!d.isValid()) return false; 
+
+                    // If in current month, stick to calculated missingDays
+                    if (d.month() === selectedMonth.month()) {
+                        return missingDays.includes(dateStr);
+                    }
+
+                    // Previous Month Logic
+                    // records / employeeRecords contains ALL fetched data (which includes history for EmployeeDashboard)
+                    // Note: In EmployeeDashboard, `monthlyRecords` is filtered, but `records` (state) or `employeeRecords` (arg) might be different.
+                    // The argument `employeeRecords` passed to `getMonthlyPayroll` is `records` from state.
+                    const hasRecord = employeeRecords.some(r => {
+                        const rd = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                        return rd.isValid() && rd.isSame(d, 'day');
+                    });
+                    
+                    if (hasRecord) return false; // Present
+
+                    // 2. Is it a Weekend?
+                    const day = d.day();
+                    if (day === 0 || day === 6) return false; // Weekend (Not Absent)
+
+                    // 3. Is it a Holiday?
+                    if (holidayDates.includes(dateStr)) return false; // Holiday (Not Absent)
+
+                    // Default: Absent
+                    return true;
+                 };
+
                  const fridayStr = saturday.subtract(1, 'day').format("YYYY-MM-DD");
                  const mondayStr = saturday.add(2, 'day').format("YYYY-MM-DD");
                  
-                 const isFriAbsent = missingDays.includes(fridayStr);
-                 const isMonAbsent = missingDays.includes(mondayStr);
+                 const isFriAbsent = checkAbsent(fridayStr);
+                 const isMonAbsent = checkAbsent(mondayStr);
 
                  if (isFriAbsent && isMonAbsent) {
                      if (saturday.month() === selectedMonth.month()) {
@@ -696,9 +732,7 @@ export default function EmployeeDashboard() {
     const incentiveAmount = monthlyIncentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
     payableSalary += incentiveAmount;
 
-    if (presentDaysCount === 0 && paidLeavesCount === 0) {
-        payableSalary = 0 + incentiveAmount;
-    }
+
     
     if (payableSalary < 0) payableSalary = 0;
 
@@ -823,7 +857,10 @@ export default function EmployeeDashboard() {
     try {
       const q = query(
         collection(db, "punches"),
-        where("email", "==", userEmail)
+        where("email", "==", userEmail),
+        // OPTIONAL: Filter by date range to optimize if needed, but client-side sort handles it.
+        // For robustness given the new logic, let's fetch roughly relevant data if the collection is huge.
+        // But the original code fetched ALL punches for the user. We'll keep it simple for now as per original.
       );
       const snap = await getDocs(q);
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));

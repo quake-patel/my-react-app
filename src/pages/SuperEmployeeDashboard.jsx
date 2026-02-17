@@ -598,6 +598,10 @@ export default function SuperEmployeeDashboard() {
     
     // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
     let sCurr = start.clone();
+    // FIX: If month starts on Sunday, we must check the preceding Saturday to trigger the sandwich check
+    if (start.day() === 0) {
+        sCurr = start.subtract(1, 'day');
+    }
     let unworkedWeekendCount = 0;
 
 
@@ -617,11 +621,42 @@ export default function SuperEmployeeDashboard() {
                  const sunday = sCurr.add(1, 'day');
                  
 
+                 // CHECK ABSENT HELPER
+                 const checkAbsent = (dateStr) => {
+                    const d = dayjs(dateStr, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                    if (!d.isValid()) return false; 
+
+                    // If in current month, stick to calculated missingDays
+                    if (d.month() === selectedMonth.month()) {
+                        return missingDays.includes(dateStr);
+                    }
+
+                    // Previous Month Logic
+                    // 1. Is there a record in the FULL employeeRecords (which now has history)?
+                    // Note: employeeRecords passed to this function are ALL records for this employee.
+                    const hasRecord = employeeRecords.some(r => {
+                        const rd = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"], false);
+                        return rd.isValid() && rd.isSame(d, 'day');
+                    });
+                    
+                    if (hasRecord) return false; // Present
+
+                    // 2. Is it a Weekend?
+                    const day = d.day();
+                    if (day === 0 || day === 6) return false; // Weekend (Not Absent)
+
+                    // 3. Is it a Holiday?
+                    if (holidayDates.includes(dateStr)) return false; // Holiday (Not Absent)
+
+                    // Default: Absent
+                    return true;
+                 };
+
                  const fridayStr = saturday.subtract(1, 'day').format("YYYY-MM-DD");
                  const mondayStr = saturday.add(2, 'day').format("YYYY-MM-DD");
                  
-                 const isFriAbsent = missingDays.includes(fridayStr);
-                 const isMonAbsent = missingDays.includes(mondayStr);
+                 const isFriAbsent = checkAbsent(fridayStr);
+                 const isMonAbsent = checkAbsent(mondayStr);
 
                  if (isFriAbsent && isMonAbsent) {
                      if (saturday.month() === selectedMonth.month()) {
@@ -696,9 +731,7 @@ export default function SuperEmployeeDashboard() {
     const incentiveAmount = monthlyIncentives.reduce((sum, inc) => sum + (Number(inc.amount) || 0), 0);
     payableSalary += incentiveAmount;
 
-    if (presentDaysCount === 0 && paidLeavesCount === 0) {
-        payableSalary = 0 + incentiveAmount;
-    }
+
     
     if (payableSalary < 0) payableSalary = 0;
 
@@ -735,7 +768,7 @@ export default function SuperEmployeeDashboard() {
   const fetchMyData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const startOfMonth = selectedMonth.startOf('month').format('YYYY-MM-DD');
+      const startOfMonth = selectedMonth.clone().startOf('month').subtract(7, 'day').format('YYYY-MM-DD');
       const endOfMonth = selectedMonth.endOf('month').format('YYYY-MM-DD');
 
       const q = query(
