@@ -69,6 +69,7 @@ import {
   doc,
   deleteDoc,
   setDoc,
+  getDoc,
   query,
   where,
 } from "firebase/firestore";
@@ -828,7 +829,7 @@ export default function AdminDashboard() {
   // NEW STATE for Payroll Adjustments
   const [adjustments, setAdjustments] = useState({}); // { 'empId_YYYY-MM': { grantedLeaves: 0, grantedHours: 0 } }
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
-  const [currentEmpForAdj] = useState(null);
+  const [currentEmpForAdj, setCurrentEmpForAdj] = useState(null);
   const [adjForm] = Form.useForm();
 
   // RESTORED: Fetch Adjustments
@@ -940,7 +941,7 @@ export default function AdminDashboard() {
     const recordedDates = [];
     const shortDays = []; // For UI (3 to 8 hours)
     const zeroDays = []; // For UI (< 3 hours)
-
+    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
     const today = dayjs();
 
     monthlyRecords.forEach((r) => {
@@ -1167,12 +1168,15 @@ export default function AdminDashboard() {
       let hoursForPay = dailyHours;
 
       let earned = 0;
+      let boosted = 0;
 
       if (isWeekend || isHoliday) {
         earned = 1;
+        boosted = 1;
       } else {
         if (hoursForPay >= 8) {
           earned = 1;
+          boosted = 1;
         } else if (hoursForPay >= 3) {
           // Short Day Logic (3h - 8h)
           const deficit = 8 - hoursForPay;
@@ -1184,9 +1188,16 @@ export default function AdminDashboard() {
           } else {
             earned = 0.5; // Short Day Penalty
           }
+
+          if (r.isManualEntry) {
+            boosted = 0.5;
+          } else {
+            boosted = 1;
+          }
         }
       }
       earnedDays += earned;
+      boostedDays += boosted;
 
       if (isWeekend || isHoliday || hoursForPay >= 3) {
         presentDaysCount += 1;
@@ -1533,23 +1544,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // MODIFIED: triggerSwapFlow now accepts the record to capture source hours
   const triggerSwapFlow = (record, payroll, employeeInfo) => {
-    // We need to know the source hours to add them to the target date later
-    // "record" is the weekend record
-    let sourceHours = 0;
-    if (record.hours) {
-      const [h, m] = record.hours.split(":").map(Number);
-      sourceHours = h + m / 60;
-    } else if (record.punchTimes && record.punchTimes.length > 0) {
-       // fallback if hours not set but punches exist
-       const { totalHours } = calculateTimes(record.punchTimes);
-       if(totalHours) {
-         const [h, m] = totalHours.split(":").map(Number);
-         sourceHours = h + m / 60;
-       }
-    }
-
     const dates = [
       ...(payroll.missingDays || []),
       ...(payroll.zeroDays || []).map((z) => z.date),
@@ -1558,34 +1553,29 @@ export default function AdminDashboard() {
       weekendRecordId: record.id,
       employeeInfo,
       absenceDates: dates,
-      sourceHours, // Capture source hours
     });
     setSwapModalOpen(true);
-    // swapType is no longer relevant for the *amount* since we use sourceHours,
-    // but we might still use it or remove it. For now, we'll ignore it in logic or keep meaningful defaults.
     swapForm.setFieldsValue({ targetDate: dates[0], swapType: "full" });
   };
 
   const handleSwapAttendance = async (values) => {
-    const { targetDate, justApprove } = values; // swapType ignored
+    const { targetDate, swapType, justApprove } = values;
     if (!swapTarget) return;
 
-    const { weekendRecordId, employeeInfo, sourceHours } = swapTarget;
+    const { weekendRecordId, employeeInfo } = swapTarget;
 
     try {
-      // 1. Update Source (Weekend) -> Set time to 0, approve it
+      // 1. Approve the Weekend
       await updateDoc(doc(db, "punches", weekendRecordId), {
         weekendApproved: true,
-        hours: "0:00",
-        punchTimes: [], // Clear punches so they don't override hours
-        inTime: null,
-        outTime: null,
-        numberOfPunches: 0
       });
 
       if (!justApprove && targetDate) {
-        // 2. Add Source Hours to Target Date
-        // First get existing target day info
+        // 2. Add or Update the Target Date (The Absence/LowHour day)
+        const hoursStr = swapType === "half" ? "3:00" : "8:00";
+        const punchTimes =
+          swapType === "half" ? ["09:00", "12:00"] : ["09:00", "17:00"];
+
         const q = query(
           collection(db, "punches"),
           where("employeeId", "==", employeeInfo.employeeId),
@@ -1594,58 +1584,38 @@ export default function AdminDashboard() {
         const snap = await getDocs(q);
 
         if (!snap.empty) {
-            const targetDoc = snap.docs[0];
-            const targetData = targetDoc.data();
-            
-            let currentTargetHours = 0;
-            if (targetData.hours) {
-                const [h, m] = targetData.hours.split(":").map(Number);
-                currentTargetHours = h + m / 60;
-            }
-
-            // New Total
-            const newTotal = currentTargetHours + sourceHours;
-            const newHoursStr = formatDuration(newTotal); // Uses helper to format H:mm
-
-            await updateDoc(doc(db, "punches", targetDoc.id), {
-                hours: newHoursStr,
-                // We MUST clear specific punch details because if we just update hours, 
-                // re-calculating from old punches might revert it or cause confusion.
-                // The prompt implies we just "add time".
-                punchTimes: [], 
-                numberOfPunches: 0,
-                inTime: null, 
-                outTime: null,
-                isManualEntry: true,
-                isLeave: false, // Ensure it's not marked as leave if it was
-            });
+          await updateDoc(doc(db, "punches", snap.docs[0].id), {
+            numberOfPunches: 2,
+            punchTimes,
+            inTime: punchTimes[0],
+            outTime: punchTimes[1],
+            hours: hoursStr,
+            isManualEntry: true,
+            isLeave: false,
+          });
         } else {
-            // Target date doesn't exist yet (e.g. was a missing day)
-            // So just set it to sourceHours
-            const newHoursStr = formatDuration(sourceHours);
-
-            await addDoc(collection(db, "punches"), {
-                employeeId: employeeInfo.employeeId || "",
-                firstName: employeeInfo.firstName || "",
-                email: employeeInfo.email || "",
-                employee: employeeInfo.employeeName || "Unknown",
-                department: employeeInfo.department || "",
-                date: targetDate,
-                numberOfPunches: 0,
-                punchTimes: [],
-                inTime: null,
-                outTime: null,
-                hours: newHoursStr,
-                uploadedAt: new Date().toISOString(),
-                isManualEntry: true,
-                isLeave: false,
-            });
+          await addDoc(collection(db, "punches"), {
+            employeeId: employeeInfo.employeeId || "",
+            firstName: employeeInfo.firstName || "",
+            email: employeeInfo.email || "",
+            employee: employeeInfo.employeeName || "Unknown",
+            department: employeeInfo.department || "",
+            date: targetDate,
+            numberOfPunches: 2,
+            punchTimes,
+            inTime: punchTimes[0],
+            outTime: punchTimes[1],
+            hours: hoursStr,
+            uploadedAt: new Date().toISOString(),
+            isManualEntry: true,
+            isLeave: false,
+          });
         }
         message.success(
-          `Swapped! Weekend becomes 0h. Added ${formatDuration(sourceHours)} to ${targetDate}.`,
+          `Approved weekend and swapped with ${targetDate} (${swapType === "half" ? "3h" : "8h"})`,
         );
       } else {
-        message.success("Weekend work approved (0h)");
+        message.success("Weekend work approved");
       }
 
       setSwapModalOpen(false);
@@ -1654,6 +1624,240 @@ export default function AdminDashboard() {
     } catch (e) {
       console.error(e);
       message.error("Action failed: " + e.message);
+    }
+  };
+
+  const handleMarkPresent = async (dateStr, employeeInfo, type = "full") => {
+    try {
+      const hoursStr = type === "half" ? "3:00" : "8:00";
+      const punchTimes =
+        type === "half" ? ["09:00", "12:00"] : ["09:00", "17:00"];
+
+      // Check if record exists
+      const q = query(
+        collection(db, "punches"),
+        where("employeeId", "==", employeeInfo.employeeId),
+        where("date", "==", dateStr),
+      );
+      const snap = await getDocs(q);
+
+      if (!snap.empty) {
+        await updateDoc(doc(db, "punches", snap.docs[0].id), {
+          numberOfPunches: 2,
+          punchTimes,
+          inTime: punchTimes[0],
+          outTime: punchTimes[1],
+          hours: hoursStr,
+          isManualEntry: true,
+          isLeave: false,
+        });
+      } else {
+        await addDoc(collection(db, "punches"), {
+          employeeId: employeeInfo.employeeId || "",
+          firstName: employeeInfo.firstName || "",
+          email: employeeInfo.email || "",
+          employee: employeeInfo.employeeName || "Unknown",
+          department: employeeInfo.department || "",
+          date: dateStr,
+          numberOfPunches: 2,
+          punchTimes,
+          inTime: punchTimes[0],
+          outTime: punchTimes[1],
+          hours: hoursStr,
+          uploadedAt: new Date().toISOString(),
+          isManualEntry: true,
+          isLeave: false,
+        });
+      }
+      message.success(
+        `Marked as ${type === "half" ? "Half Day" : "Full Day"} for ${dateStr}`,
+      );
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      message.error("Failed to mark present");
+    }
+  };
+
+  /* ================= HANDLERS ================= */
+
+  const handleGrantLeave = async (dateStr, employeeInfo, isPaid) => {
+    // Logic Update: Update Payroll Adjustments directly
+    if (!isPaid) {
+      // Unpaid leave logic if needed
+    }
+
+    try {
+      // 1. Create the Leave Record (so it stops showing as "Missing")
+      await addDoc(collection(db, "punches"), {
+        employeeId: employeeInfo.employeeId || "",
+        firstName: employeeInfo.firstName || "",
+        email: employeeInfo.email || "",
+        employee: employeeInfo.employeeName || "Unknown",
+        department: employeeInfo.department || "",
+        date: dateStr,
+        numberOfPunches: 0,
+        punchTimes: [],
+        inTime: "-",
+        outTime: "-",
+        hours: isPaid ? "08:00" : "00:00", // Visual only
+        uploadedAt: new Date().toISOString(),
+        isManualEntry: true,
+        isLeave: true,
+        leaveType: isPaid ? "Paid" : "Unpaid",
+      });
+
+      // 2. If Paid/Granted, update the Payroll Adjustments (+1 Leave, +8 Hours)
+      if (isPaid) {
+        const monthStr = dayjs(dateStr).format("YYYY-MM");
+        const key = `${employeeInfo.employeeId}_${monthStr}`;
+
+        const currentAdj = adjustments[key] || {
+          grantedLeaves: 0,
+          grantedHours: 0,
+        };
+        const newGrantedLeaves = (currentAdj.grantedLeaves || 0) + 1;
+        const newGrantedHours = (currentAdj.grantedHours || 0) + 8; // Grant 8 hours
+
+        await setDoc(
+          doc(db, "payroll_adjustments", key),
+          {
+            grantedLeaves: newGrantedLeaves,
+            grantedHours: newGrantedHours,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        );
+
+        // Update Local State directly
+        setAdjustments((prev) => ({
+          ...prev,
+          [key]: {
+            grantedLeaves: newGrantedLeaves,
+            grantedHours: newGrantedHours,
+          },
+        }));
+        message.success(`Granted Leave for ${dateStr} (+8 Hrs)`);
+      } else {
+        message.success(`Marked as Unpaid Leave for ${dateStr}`);
+      }
+
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      message.error("Failed to grant leave");
+    }
+  };
+
+  const handleGrantShortage = async (shortDayRecord, employeeInfo) => {
+    // Logic: Add the shortage hours to 'grantedHours'
+    try {
+      // Use selectedMonth to ensure consistent key generation regardless of date format
+      const monthStr = selectedMonth.format("YYYY-MM");
+      const key = `${employeeInfo.employeeId}_${monthStr}`;
+
+      const currentAdj = adjustments[key] || {
+        grantedLeaves: 0,
+        grantedHours: 0,
+        grantedShortageDates: [],
+      };
+      const newGrantedHours =
+        (currentAdj.grantedHours || 0) + (shortDayRecord.shortage || 0);
+      const newGrantedDates = [
+        ...(currentAdj.grantedShortageDates || []),
+        shortDayRecord.date,
+      ];
+
+      await setDoc(
+        doc(db, "payroll_adjustments", key),
+        {
+          grantedLeaves: currentAdj.grantedLeaves || 0,
+          grantedHours: newGrantedHours,
+          grantedShortageDates: newGrantedDates,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      );
+
+      setAdjustments((prev) => ({
+        ...prev,
+        [key]: {
+          ...currentAdj,
+          grantedHours: newGrantedHours,
+          grantedShortageDates: newGrantedDates,
+        },
+      }));
+      message.success(
+        `Granted +${formatDuration(shortDayRecord.shortage)} hours`,
+      );
+    } catch (e) {
+      console.error(e);
+      message.error("Failed to grant shortage: " + e.message);
+    }
+  };
+
+  const handleRevokeShortage = async (record) => {
+    try {
+      const monthStr = selectedMonth.format("YYYY-MM");
+      const key = `${record.employeeId}_${monthStr}`;
+
+      const currentAdj = adjustments[key] || {
+        grantedLeaves: 0,
+        grantedHours: 0,
+        grantedShortageDates: [],
+      };
+      if (!(currentAdj.grantedShortageDates || []).includes(record.date))
+        return;
+
+      // Remove date
+      const newGrantedDates = (currentAdj.grantedShortageDates || []).filter(
+        (d) => d !== record.date,
+      );
+
+      // Calculate shortage to remove (re-calculate or approximate?)
+      // Since we don't store exactly how much was granted for *that specific* date in the array (only dates),
+      // we have to re-derive the shortage amount for that day from the record.
+      let dailyHours = 0;
+      if (record.punchTimes && record.punchTimes.length > 0) {
+        const { totalHours } = calculateTimes(record.punchTimes);
+        if (totalHours) {
+          const [h, m] = totalHours.split(":").map(Number);
+          dailyHours = h + m / 60;
+        }
+      } else if (record.hours) {
+        const [h, m] = record.hours.split(":").map(Number);
+        dailyHours = h + m / 60;
+      }
+      const shortageToRemove = Math.max(0, 8 - dailyHours);
+
+      const newGrantedHours = Math.max(
+        0,
+        (currentAdj.grantedHours || 0) - shortageToRemove,
+      );
+
+      await setDoc(
+        doc(db, "payroll_adjustments", key),
+        {
+          grantedLeaves: currentAdj.grantedLeaves || 0,
+          grantedHours: newGrantedHours,
+          grantedShortageDates: newGrantedDates,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      );
+
+      setAdjustments((prev) => ({
+        ...prev,
+        [key]: {
+          ...currentAdj,
+          grantedHours: newGrantedHours,
+          grantedShortageDates: newGrantedDates,
+        },
+      }));
+      message.success(`Revoked grant for ${record.date}`);
+    } catch (e) {
+      console.error(e);
+      message.error("Failed to revoke");
     }
   };
 
@@ -1927,7 +2131,7 @@ export default function AdminDashboard() {
         key: "fullDate",
         width: 220,
         fixed: "left",
-        render: (t) => <span>{t}</span>,
+        render: (t, r) => <span>{t}</span>,
       },
       ...punchCols,
       {
@@ -3031,7 +3235,7 @@ export default function AdminDashboard() {
                             formatter={(value) =>
                               `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
                             }
-                            parser={(value) => value.replace(/₹\s?|(,*)/g, "")}
+                            parser={(value) => value.replace(/\₹\s?|(,*)/g, "")}
                             style={{ width: "100%" }}
                           />
                         </Form.Item>
