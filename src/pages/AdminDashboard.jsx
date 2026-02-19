@@ -266,6 +266,7 @@ const DEFAULT_HOLIDAYS = [
 
 export default function AdminDashboard() {
   const [records, setRecords] = useState([]);
+  const [contextRecords, setContextRecords] = useState([]); // Stores extended range for calculations
 
   const [uploading, setUploading] = useState(false);
   const [viewMode, setViewMode] = useState("table");
@@ -322,20 +323,25 @@ export default function AdminDashboard() {
 
   const fetchData = async () => {
     try {
-      const startOfMonth = selectedMonth.startOf("month").format("YYYY-MM-DD");
-      const endOfMonth = selectedMonth.endOf("month").format("YYYY-MM-DD");
+      const startOfMonth = selectedMonth.startOf("month");
+      const endOfMonth = selectedMonth.endOf("month");
 
-      // OPTIMIZATION: Query only for the selected month
+      // Context Window: Fetch -7 to +7 days to handle Sandwich Rule crossing months
+      const contextStart = startOfMonth.subtract(7, "day").format("YYYY-MM-DD");
+      const contextEnd = endOfMonth.add(7, "day").format("YYYY-MM-DD");
+
+      // Fetch Extended Data
       const q = query(
         collection(db, "punches"),
-        where("date", ">=", startOfMonth),
-        where("date", "<=", endOfMonth),
+        where("date", ">=", contextStart),
+        where("date", "<=", contextEnd),
       );
 
       const snap = await getDocs(q);
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const allData = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-      data.sort((a, b) => {
+      // Sort
+      allData.sort((a, b) => {
         const dateA = dayjs(
           a.date,
           [
@@ -362,10 +368,20 @@ export default function AdminDashboard() {
         if (!dateB.isValid()) return -1;
         return dateB.valueOf() - dateA.valueOf();
       });
-      setRecords(data);
+
+      setContextRecords(allData); // Store full context
+
+      // Filter for UI (Current Month Only)
+      const currentMonthData = allData.filter((d) => {
+        const day = dayjs(d.date);
+        return day.isValid() && day.isSame(selectedMonth, "month");
+      });
+      
+      setRecords(currentMonthData);
+
       // Note: syncEmployeesFromPunches might find fewer employees now if they only worked in past months.
       // This is generally acceptable for a dashboard relying on active data.
-      syncEmployeesFromPunches(data);
+      syncEmployeesFromPunches(currentMonthData); // Sync based on visible records
     } catch (e) {
       console.error(e);
       message.error("Failed to load records");
@@ -630,6 +646,7 @@ export default function AdminDashboard() {
 
     // 2. Group by Employee
     const groups = groupByEmployee(monthRecords, employees);
+    const contextGroups = groupByEmployee(contextRecords, employees); // Group Context
 
     // 3. Build Excel Data
     const data = [];
@@ -637,10 +654,12 @@ export default function AdminDashboard() {
     const daysInMonth = selectedMonth.daysInMonth();
 
     Object.values(groups).forEach((emp) => {
-      const payroll = getMonthlyPayroll(
+       const empContext = contextGroups[emp.employeeId]?.records || [];
+       const payroll = getMonthlyPayroll(
         emp.records,
         emp.employeeId,
         emp.joiningDate,
+        empContext // Pass Context
       );
 
       // Data Mapping based on Screenshot
@@ -1249,51 +1268,56 @@ export default function AdminDashboard() {
     const sandwichDays = [];
     let sandwichDeduction = 0;
 
+    // Helper: Check if Absent (Leave or Missing) using Context
+    // Uses 'contextRecords' which contains full history for this user
+    const isAbsentOrLeave = (checkDateStr) => {
+        // 1. Is it a Holiday?
+        if (holidayDates.includes(checkDateStr)) return false;
+
+        // 2. Check in Context Records
+        const record = contextRecords.find(r => r.date === checkDateStr); 
+
+        if (!record) return true; // Missing -> Absent
+        if (record.isLeave) return true; // Explicit Leave -> Absent
+        
+        return false;
+    };
+
     // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
     let sCurr = start.clone();
     let unworkedWeekendCount = 0;
-
-
-
     const cutoffDate = dayjs();
 
     while (sCurr.isSameOrBefore(end)) {
       const dayStr = sCurr.format("YYYY-MM-DD");
-      if (sCurr.day() === 0 || sCurr.day() === 6) {
-        // Weekend
+      if (sCurr.day() === 0 || sCurr.day() === 6) { // Weekend
         // Count for Pay if NOT WORKED (Prevent Double Count)
         if (!recordedDates.includes(dayStr) && sCurr.isSameOrBefore(cutoffDate, "day")) {
           unworkedWeekendCount++;
         }
+        
+        // CHECK SANDWICH (Per Day Check)
+        let friday, monday;
+        if (sCurr.day() === 6) { // Saturday
+             friday = sCurr.subtract(1, 'day');
+             monday = sCurr.add(2, 'day');
+        } else { // Sunday
+             friday = sCurr.subtract(2, 'day');
+             monday = sCurr.add(1, 'day');
+        }
+        
+        const fridayStr = friday.format("YYYY-MM-DD");
+        const mondayStr = monday.format("YYYY-MM-DD");
 
-        if (sCurr.day() === 6) {
-          // Saturday Checker for Sandwich
-          const saturday = sCurr;
-          const sunday = sCurr.add(1, "day");
-
-
-          const fridayStr = saturday.subtract(1, "day").format("YYYY-MM-DD");
-          const mondayStr = saturday.add(2, "day").format("YYYY-MM-DD");
-
-          const isFriAbsent = missingDays.includes(fridayStr);
-          const isMonAbsent = missingDays.includes(mondayStr);
-
-          if (isFriAbsent && isMonAbsent) {
-            if (saturday.month() === selectedMonth.month()) {
-              sandwichDays.push(saturday.format("YYYY-MM-DD"));
-              sandwichDeduction++;
-            }
-            if (sunday.month() === selectedMonth.month()) {
-              sandwichDays.push(sunday.format("YYYY-MM-DD"));
-              sandwichDeduction++;
-            }
-          }
+        if (isAbsentOrLeave(fridayStr) && isAbsentOrLeave(mondayStr)) {
+             sandwichDays.push(dayStr);
+             sandwichDeduction++;
         }
       }
       sCurr = sCurr.add(1, "day");
     }
 
-    // SANDWICH LOGIC ENABLED
+    // SANDWICH LOGIC ENABLED full
 
     // --- HOLIDAY LOGIC ---
     // Count weekdays that are holidays for Pay (Unworked)
@@ -1375,6 +1399,7 @@ export default function AdminDashboard() {
       grantedLeaves: paidLeavesCount, // Export strictly derived value
       grantedHours: adj.grantedHours || 0,
       grantedShortageDates: adj.grantedShortageDates || [],
+      hasPenalty: effectivelyEarnedDays < presentDaysCount - 0.01,
       // Net Earning Days Logic
       // Updated to match Employee/SuperEmployee Logic: Use Calculated Days for Pay
       netEarningDays: daysForPay,
@@ -1882,7 +1907,16 @@ export default function AdminDashboard() {
           <Statistic
             title="Net Earned"
             value={payroll.netEarningDays}
-            suffix={`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+            suffix={
+                <span>
+                    {`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+                    {payroll.shortDays && payroll.shortDays.length > 0 && payroll.hasPenalty && (
+                        <Tooltip title="Warning: Short hours detected on some days (Risk of Half Day)">
+                            <span style={{width: 8, height: 8, borderRadius: '50%', background: '#faad14', display: 'inline-block', marginLeft: 8, verticalAlign: 'middle'}}></span>
+                        </Tooltip>
+                    )}
+                </span>
+            }
             valueStyle={{
               fontSize: 16,
               fontWeight: 600,
@@ -2243,9 +2277,11 @@ export default function AdminDashboard() {
   }, [records, selectedMonth]);
 
   const employeeGroups = groupByEmployee(filteredRecords);
+  const contextGroups = React.useMemo(() => groupByEmployee(contextRecords), [contextRecords]);
 
   const tabItems = Object.entries(employeeGroups).map(([key, emp]) => {
-    const payroll = getMonthlyPayroll(emp.records, emp.employeeId);
+    const empContext = contextGroups[emp.employeeId]?.records || [];
+    const payroll = getMonthlyPayroll(emp.records, emp.employeeId, null, empContext);
 
     // Compute Combined Records (Actual + Missing)
     const missing = (payroll.missingDays || []).map((date) => ({
@@ -2654,9 +2690,12 @@ export default function AdminDashboard() {
             ) : (
               <Row gutter={[16, 16]}>
                 {Object.entries(employeeGroups).map(([k, emp]) => {
+                  const empContext = contextGroups[emp.employeeId]?.records || [];
                   const payroll = getMonthlyPayroll(
                     emp.records,
                     emp.employeeId,
+                    null,
+                    empContext
                   );
                   return (
                     <Col

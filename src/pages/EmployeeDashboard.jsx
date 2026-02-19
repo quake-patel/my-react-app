@@ -599,13 +599,25 @@ export default function EmployeeDashboard() {
     // --- SANDWICH LEAVE LOGIC ---
     const sandwichDays = [];
     let sandwichDeduction = 0;
+
+    // Helper: Check if Absent (Leave or Missing)
+    // Uses 'employeeRecords' which contains full history for this user
+    const isAbsentOrLeave = (checkDateStr) => {
+        // 1. Is it a Holiday?
+        if (holidayDates.includes(checkDateStr)) return false;
+
+        // 2. Check in Full Records
+        const record = employeeRecords.find(r => r.date === checkDateStr); 
+
+        if (!record) return true; // Missing -> Absent
+        if (record.isLeave) return true; // Explicit Leave -> Absent
+        
+        return false;
+    };
     
     // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
     let sCurr = start.clone();
     let unworkedWeekendCount = 0;
-
-
-
     const cutoffDate = dayjs();
 
     while (sCurr.isSameOrBefore(end)) {
@@ -616,33 +628,28 @@ export default function EmployeeDashboard() {
                  unworkedWeekendCount++;
              }
 
-             if (sCurr.day() === 6) { // Saturday
-                 const saturday = sCurr;
-                 const sunday = sCurr.add(1, 'day');
-                 
+             // CHECK SANDWICH (Per Day Check)
+             let friday, monday;
+             if (sCurr.day() === 6) { // Sat
+                 friday = sCurr.subtract(1, 'day');
+                 monday = sCurr.add(2, 'day');
+             } else { // Sun
+                 friday = sCurr.subtract(2, 'day');
+                 monday = sCurr.add(1, 'day');
+             }
+             
+             const fridayStr = friday.format("YYYY-MM-DD");
+             const mondayStr = monday.format("YYYY-MM-DD");
 
-                 const fridayStr = saturday.subtract(1, 'day').format("YYYY-MM-DD");
-                 const mondayStr = saturday.add(2, 'day').format("YYYY-MM-DD");
-                 
-                 const isFriAbsent = missingDays.includes(fridayStr);
-                 const isMonAbsent = missingDays.includes(mondayStr);
-
-                 if (isFriAbsent && isMonAbsent) {
-                     if (saturday.month() === selectedMonth.month()) {
-                         sandwichDays.push(saturday.format("YYYY-MM-DD"));
-                         sandwichDeduction++;
-                     }
-                     if (sunday.month() === selectedMonth.month()) {
-                         sandwichDays.push(sunday.format("YYYY-MM-DD"));
-                         sandwichDeduction++;
-                     }
-                 }
-            }
+             if (isAbsentOrLeave(fridayStr) && isAbsentOrLeave(mondayStr)) {
+                 sandwichDays.push(dayStr);
+                 sandwichDeduction++;
+             }
         }
         sCurr = sCurr.add(1, 'day');
     }
     
-    // SANDWICH LOGIC ENABLED
+    // SANDWICH LOGIC ENABLED full
 
 
     // --- HOLIDAY LOGIC ---
@@ -717,6 +724,7 @@ export default function EmployeeDashboard() {
       passedTargetHours,
       passedEligibleHours,
       passedDifference: passedEligibleHours - passedTargetHours,
+      hasPenalty: effectivelyEarnedDays < presentDaysCount - 0.01,
       // Net Earning Days Logic
       netEarningDays: daysForPay,
       daysInMonth: selectedMonth.daysInMonth(),
@@ -748,7 +756,16 @@ export default function EmployeeDashboard() {
                   <Statistic 
                     title="Net Earned" 
                     value={payroll.netEarningDays} 
-                    suffix={`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+                    suffix={
+                        <span>
+                            {`/ ${payroll.daysInMonth} (Bank: ${payroll.creditBank ? payroll.creditBank.toFixed(2) : 0})`}
+                            {payroll.shortDays && payroll.shortDays.length > 0 && payroll.hasPenalty && (
+                                <Tooltip title="Warning: Short hours detected on some days (Risk of Half Day)">
+                                    <span style={{width: 8, height: 8, borderRadius: '50%', background: '#faad14', display: 'inline-block', marginLeft: 8, verticalAlign: 'middle'}}></span>
+                                </Tooltip>
+                            )}
+                        </span>
+                    }
                     valueStyle={{ fontSize: 16, fontWeight: 600, color: payroll.netEarningDays < payroll.daysInMonth ? "#cf1322" : "#3f8600" }} 
                   />
               </Col>
