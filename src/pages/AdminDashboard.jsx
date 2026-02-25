@@ -1277,39 +1277,72 @@ export default function AdminDashboard() {
         // 2. Check in Context Records
         const record = contextRecords.find(r => r.date === checkDateStr); 
 
-        if (!record) return true; // Missing -> Absent
+        if (!record) {
+            // Missing -> Absent ONLY if not in the future
+            return dayjs(checkDateStr).isSameOrBefore(today, 'day');
+        }
+        
         if (record.isLeave) return true; // Explicit Leave -> Absent
         
+        // 3-hour working threshold: < 3h is considered leave
+        let dailyHours = 0;
+        if (record.punchTimes && record.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(record.punchTimes);
+            if (totalHours) {
+                const [h, m] = totalHours.split(":").map(Number);
+                dailyHours = h + (m / 60);
+            }
+        } else if (record.hours) {
+            const [h, m] = record.hours.split(":").map(Number);
+            dailyHours = h + (m / 60);
+        }
+        
+        if (dailyHours < 3) return true;
+
         return false;
     };
 
-    // Iterate through weekends in the month to count Weekends for Pay AND Check Sandwich
+    // Helper to check if a day is a "scheduled working day"
+    const isScheduledWorkingDay = (date) => {
+        const d = dayjs(date);
+        const day = d.day();
+        const isWeekend = day === 0 || day === 6;
+        const isHoliday = holidayDates.includes(d.format("YYYY-MM-DD"));
+        return !isWeekend && !isHoliday;
+    };
+
+    // Iterate through weekends/holidays in the month to count Weekends for Pay AND Check Sandwich
     let sCurr = start.clone();
     let unworkedWeekendCount = 0;
     const cutoffDate = dayjs();
 
     while (sCurr.isSameOrBefore(end)) {
       const dayStr = sCurr.format("YYYY-MM-DD");
-      if (sCurr.day() === 0 || sCurr.day() === 6) { // Weekend
+      const isWeekend = sCurr.day() === 0 || sCurr.day() === 6;
+      const isHoliday = holidayDates.includes(dayStr);
+
+      if (isWeekend) {
         // Count for Pay if NOT WORKED (Prevent Double Count)
         if (!recordedDates.includes(dayStr) && sCurr.isSameOrBefore(cutoffDate, "day")) {
           unworkedWeekendCount++;
         }
-        
-        // CHECK SANDWICH (Per Day Check)
-        let friday, monday;
-        if (sCurr.day() === 6) { // Saturday
-             friday = sCurr.subtract(1, 'day');
-             monday = sCurr.add(2, 'day');
-        } else { // Sunday
-             friday = sCurr.subtract(2, 'day');
-             monday = sCurr.add(1, 'day');
+      }
+      
+      if (isWeekend || isHoliday) {
+        // CHECK SANDWICH (Robust Logic)
+        // Find nearest scheduled working day before
+        let prev = sCurr.subtract(1, 'day');
+        while (prev.isValid() && !isScheduledWorkingDay(prev.format('YYYY-MM-DD'))) {
+             prev = prev.subtract(1, 'day');
         }
         
-        const fridayStr = friday.format("YYYY-MM-DD");
-        const mondayStr = monday.format("YYYY-MM-DD");
-
-        if (isAbsentOrLeave(fridayStr) && isAbsentOrLeave(mondayStr)) {
+        // Find nearest scheduled working day after
+        let next = sCurr.add(1, 'day');
+        while (next.isValid() && !isScheduledWorkingDay(next.format('YYYY-MM-DD'))) {
+             next = next.add(1, 'day');
+        }
+        
+        if (isAbsentOrLeave(prev.format('YYYY-MM-DD')) && isAbsentOrLeave(next.format('YYYY-MM-DD'))) {
              sandwichDays.push(dayStr);
              sandwichDeduction++;
         }
