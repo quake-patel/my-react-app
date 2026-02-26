@@ -329,12 +329,9 @@ const ChatDrawer = ({ open, onClose, currentUserEmail, currentUserName, darkMode
       styles={{ 
           body: { padding: 0, display: 'flex', flexDirection: 'column', background: BG_COLOR },
           header: { background: BG_COLOR, color: TEXT_COLOR, borderBottom: `1px solid ${darkMode ? '#303030' : '#f0f0f0'}` },
-          content: { background: BG_COLOR }
+          content: { background: BG_COLOR },
+          wrapper: { background: BG_COLOR }
       }}
-      drawerStyle={{ background: BG_COLOR }}
-      bodyStyle={{ padding: 0, display: 'flex', flexDirection: 'column', background: BG_COLOR }}
-      headerStyle={{ background: BG_COLOR, color: TEXT_COLOR, borderBottom: `1px solid ${darkMode ? '#303030' : '#f0f0f0'}` }}
-      contentWrapperStyle={{ background: BG_COLOR }}
     >
         {renderContent()}
     </Drawer>

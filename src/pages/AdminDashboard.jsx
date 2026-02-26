@@ -900,6 +900,7 @@ export default function AdminDashboard() {
     employeeRecords,
     empId = null,
     joiningDate = null,
+    contextRecordsArg = [],
   ) => {
     // RESTORED: Payroll Adjustments Reading
     const employeeId = empId || employeeRecords[0]?.employeeId;
@@ -917,7 +918,6 @@ export default function AdminDashboard() {
     });
 
     // Filter records for selected month
-    // Filter records for selected month
     const rawMonthlyRecords = employeeRecords.filter((r) => {
       if (!r.date) return false;
       const d = dayjs(
@@ -931,7 +931,7 @@ export default function AdminDashboard() {
           "MM-DD-YYYY",
           "D-MMM-YYYY",
         ],
-        true,
+        false,
       );
       return d.isValid() && d.isSame(selectedMonth, "month");
     });
@@ -997,7 +997,7 @@ export default function AdminDashboard() {
           "MM-DD-YYYY",
           "D-MMM-YYYY",
         ],
-        true,
+        false,
       );
       if (d.isValid()) {
         recordedDates.push(d.format("YYYY-MM-DD"));
@@ -1133,8 +1133,16 @@ export default function AdminDashboard() {
 
       const d = dayjs(
         r.date,
-        ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"],
-        true,
+        [
+          "YYYY-MM-DD",
+          "DD-MM-YYYY",
+          "MM/DD/YYYY",
+          "DD/MM/YYYY",
+          "YYYY/MM/DD",
+          "MM-DD-YYYY",
+          "D-MMM-YYYY",
+        ],
+        false,
       );
       const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
       const isHoliday =
@@ -1177,8 +1185,16 @@ export default function AdminDashboard() {
 
       const d = dayjs(
         r.date,
-        ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD"],
-        true,
+        [
+          "YYYY-MM-DD",
+          "DD-MM-YYYY",
+          "MM/DD/YYYY",
+          "DD/MM/YYYY",
+          "YYYY/MM/DD",
+          "MM-DD-YYYY",
+          "D-MMM-YYYY",
+        ],
+        false,
       );
       const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
       const isHoliday =
@@ -1275,7 +1291,10 @@ export default function AdminDashboard() {
         if (holidayDates.includes(checkDateStr)) return false;
 
         // 2. Check in Context Records
-        const record = contextRecords.find(r => r.date === checkDateStr); 
+        const recordsToSearch = (contextRecordsArg && contextRecordsArg.length > 0) ? contextRecordsArg : contextRecords;
+        
+        // IMPORTANT: Filter by employeeId to avoid cross-employee sandwich detection
+        const record = recordsToSearch.find(r => r.date === checkDateStr && r.employeeId === employeeId); 
 
         if (!record) {
             // Missing -> Absent ONLY if not in the future
@@ -2314,7 +2333,7 @@ export default function AdminDashboard() {
 
   const tabItems = Object.entries(employeeGroups).map(([key, emp]) => {
     const empContext = contextGroups[emp.employeeId]?.records || [];
-    const payroll = getMonthlyPayroll(emp.records, emp.employeeId, null, empContext);
+    const payroll = getMonthlyPayroll(emp.records, emp.employeeId, emp.joiningDate, empContext);
 
     // Compute Combined Records (Actual + Missing)
     const missing = (payroll.missingDays || []).map((date) => ({

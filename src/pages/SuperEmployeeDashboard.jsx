@@ -391,7 +391,7 @@ export default function SuperEmployeeDashboard() {
           "YYYY/MM/DD",
           "MM-DD-YYYY",
           "D-MMM-YYYY",
-        ], true);
+        ], false);
         return d.isValid() && d.isSame(selectedMonth, 'month');
     });
 

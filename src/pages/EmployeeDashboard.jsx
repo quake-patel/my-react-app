@@ -16,6 +16,7 @@ import {
   Col,
   Statistic,
   Tag,
+  Tooltip,
   Grid,
   List // Added List
 } from "antd";
@@ -376,7 +377,7 @@ export default function EmployeeDashboard() {
           "YYYY/MM/DD",
           "MM-DD-YYYY",
           "D-MMM-YYYY",
-        ], true);
+        ], false);
         return d.isValid() && d.isSame(selectedMonth, 'month');
     });
 
@@ -400,7 +401,6 @@ export default function EmployeeDashboard() {
     const shortDays = []; // NEW
     const zeroDays = []; // Fix: Defined for usage below
     const today = dayjs();
-    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
 
     let earnedDays = 0;
     let presentDaysCount = 0;
@@ -507,15 +507,11 @@ export default function EmployeeDashboard() {
               // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded
               let hoursForPay = dailyHours;
               let earned = 0;
-              let boosted = 0;
-
               if (isWeekend || isHoliday) {
                   earned = 1;
-                  boosted = 1;
               } else {
                   if (hoursForPay >= 8) {
                       earned = 1;
-                      boosted = 1;
                   } else if (hoursForPay >= 3) {
                       // Short Day Logic (3h - 8h)
                       const deficit = 8 - hoursForPay;
@@ -528,17 +524,11 @@ export default function EmployeeDashboard() {
                           earned = 0.5; // Short Day Penalty
                       }
                       
-                      if (r.isManualEntry) {
-                        boosted = 0.5;
-                      } else {
-                        boosted = 1;
                       }
-                  }
-              }
-              earnedDays += earned;
-              boostedDays += boosted; // Accumulate boosted days
+               }
+               earnedDays += earned;
 
-              if (isWeekend || isHoliday || hoursForPay >= 3) {
+               if (isWeekend || isHoliday || hoursForPay >= 3) {
                   presentDaysCount += 1;
               }
           }
@@ -953,22 +943,21 @@ export default function EmployeeDashboard() {
     });
     setEditOpen(true);
   };
-  
-  // NOTE: 'openRequestModal' logic was used in new UI refactor but wasn't defined.
-  // We need to define it or map it to openRequest.
-  // The UI uses: openRequestModal(dateStr, 'Leave Request') or (dateStr, 'Missing Entry Correction')
-  // We should create a helper for that.
-  
+  /* ================= REQUESTS ================= */
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [requestDate, setRequestDate] = useState(null);
   const [requestType, setRequestType] = useState("");
   const [requestReason, setRequestReason] = useState("");
 
   const openRequestModal = (date, type) => {
-      setRequestDate(date);
-      setRequestType(type);
-      setRequestReason("");
-      setRequestModalOpen(true);
+    setRequestDate(date);
+    setRequestType(type);
+    setRequestReason("");
+    setRequestModalOpen(true);
+  };
+  const openEdit = (record) => {
+    setCurrentRecord(record);
+    setEditOpen(true);
   };
 
   const submitDirectRequest = async () => {
@@ -1157,15 +1146,13 @@ export default function EmployeeDashboard() {
         const shortfall = targetHours - dailyHours;
         const hoursShortBy = shortfall > 0 ? shortfall : 0;
         
-        const presentDayCount = dailyHours >= 3 ? 1 : 0; 
-        const weekendCheck = isWeekend ? 1 : 0;
-
         let isLowHoursLeave = false;
         if (!isWeekend && dailyHours < 3 && !r.isLeave) {
             isLowHoursLeave = true;
         }
-
-        const leaveCheck = (r.isLeave || isLowHoursLeave) ? 1 : 0;
+        
+        const presentDayCount = dailyHours >= 3 ? 1 : 0; 
+        const weekendCheck = isWeekend ? 1 : 0;
         
         return {
            ...r,
