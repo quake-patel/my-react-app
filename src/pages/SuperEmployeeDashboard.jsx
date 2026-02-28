@@ -752,7 +752,6 @@ export default function SuperEmployeeDashboard() {
     daysForPay -= sandwichDeduction;
 
     // APPLY GRANTED LEAVES (User Adjustment)
-    daysForPay += paidLeavesCount;
 
     // Calculate Billable Days (Denominator)
     const daysInCurrentMonth = selectedMonth.daysInMonth();

@@ -741,7 +741,6 @@ export default function EmployeeDashboard() {
 
     // APPLY GRANTED LEAVES (User Adjustment)
     // Adding granted leaves effectively pays for those days.
-    daysForPay += paidLeavesCount;
 
     // Calculate Billable Days (Denominator)
     const daysInCurrentMonth = selectedMonth.daysInMonth();

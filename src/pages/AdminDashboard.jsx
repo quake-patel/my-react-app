@@ -627,7 +627,11 @@ export default function AdminDashboard() {
 
   const openEdit = (record) => {
     setCurrentRecord(record);
-    form.setFieldsValue({ punchTimes: (record.punchTimes || []).join(", ") });
+    form.setFieldsValue({
+      punchTimes: (record.punchTimes || []).join(", "),
+      isLeave: record.isLeave || false,
+      leaveType: record.leaveType || "Paid",
+    });
     setEditOpen(true);
   };
 
@@ -960,7 +964,6 @@ export default function AdminDashboard() {
     const recordedDates = [];
     const shortDays = []; // For UI (3 to 8 hours)
     const zeroDays = []; // For UI (< 3 hours)
-    let boostedDays = 0; // NEW: To track earned days if we allow boosting short days
     const today = dayjs();
 
     monthlyRecords.forEach((r) => {
@@ -1221,11 +1224,9 @@ export default function AdminDashboard() {
 
       if (isWeekend || isHoliday) {
         earned = 1;
-        boosted = 1;
       } else {
         if (hoursForPay >= 8 - SHORT_DAY_TOLERANCE) {
           earned = 1;
-          boosted = 1;
         } else if (hoursForPay >= 3) {
           // Short Day Logic (3h - 8h)
           const deficit = 8 - hoursForPay;
@@ -1238,20 +1239,9 @@ export default function AdminDashboard() {
           } else {
             earned = 0.5; // Short Day Penalty
           }
-
-          if (r.isManualEntry) {
-            boosted = 0.5;
-          } else {
-            boosted = 1;
-          }
         }
       }
       earnedDays += earned;
-      // boostedDays += boosted; // This variable is not used anywhere else, removing.
-
-      if (isWeekend || isHoliday || hoursForPay >= 3) {
-        presentDaysCount += 1;
-      }
     });
 
     // Incentive Calculation
@@ -1426,7 +1416,6 @@ export default function AdminDashboard() {
     // APPLY GRANTED LEAVES (User Adjustment)
     // Adding granted leaves effectively pays for those days.
     // Use dynamic paidLeavesCount for robustness
-    daysForPay += paidLeavesCount;
 
     // Calculate Billable Days (Denominator)
     const daysInCurrentMonth = selectedMonth.daysInMonth();
@@ -1604,35 +1593,127 @@ export default function AdminDashboard() {
   };
 
   const handleUpdate = async (values) => {
-    // 1. Parse Punch Times
-    const punchTimes = values.punchTimes
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
+    const { isLeave, leaveType } = values;
 
-    if (punchTimes.some((t) => !isValidTime(t))) {
-      message.error("Invalid time format (HH:MM required)");
-      return;
+    // 1. Parse Punch Times (Only if NOT a leave)
+    let punchTimes = [];
+    let inTime = "-";
+    let outTime = "-";
+    let totalHours = "00:00";
+    let numberOfPunches = 0;
+
+    if (!isLeave) {
+      punchTimes = (values.punchTimes || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+
+      if (punchTimes.some((t) => !isValidTime(t))) {
+        message.error("Invalid time format (HH:MM required)");
+        return;
+      }
+
+      // 2. Auto-calculate In/Out/Hours based on Punch Times
+      const calculated = calculateTimes(punchTimes);
+      inTime = calculated.inTime;
+      outTime = calculated.outTime;
+      totalHours = calculated.totalHours;
+      numberOfPunches = punchTimes.length;
+    } else {
+      // It's a leave
+      totalHours = leaveType === "Paid" ? "08:00" : "00:00";
     }
 
-    // 2. Auto-calculate In/Out/Hours based on Punch Times
-    const { inTime, outTime, totalHours } = calculateTimes(punchTimes);
-
     try {
-      await updateDoc(doc(db, "punches", currentRecord.id), {
-        punchTimes,
-        inTime,
-        outTime,
-        numberOfPunches: punchTimes.length,
-        hours: totalHours,
-        isEdited: true,
-      });
+      // 3. Update Payroll Adjustments if Paid status changed
+      const wasPaidLeave =
+        currentRecord.isLeave && currentRecord.leaveType === "Paid";
+      const isPaidLeave = isLeave && leaveType === "Paid";
+
+      if (wasPaidLeave !== isPaidLeave) {
+        const dateStr = currentRecord.date;
+        const monthStr = dayjs(dateStr).format("YYYY-MM");
+        const employeeId = currentRecord.employeeId;
+        const key = `${employeeId}_${monthStr}`;
+
+        const currentAdj = adjustments[key] || {
+          grantedLeaves: 0,
+          grantedHours: 0,
+        };
+
+        let newGrantedLeaves = currentAdj.grantedLeaves || 0;
+        let newGrantedHours = currentAdj.grantedHours || 0;
+
+        if (isPaidLeave) {
+          // Increment
+          newGrantedLeaves += 1;
+          newGrantedHours += 8;
+        } else if (wasPaidLeave) {
+          // Decrement
+          newGrantedLeaves = Math.max(0, newGrantedLeaves - 1);
+          newGrantedHours = Math.max(0, newGrantedHours - 8);
+        }
+
+        await setDoc(
+          doc(db, "payroll_adjustments", key),
+          {
+            grantedLeaves: newGrantedLeaves,
+            grantedHours: newGrantedHours,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        );
+
+        // Update Local State directly
+        setAdjustments((prev) => ({
+          ...prev,
+          [key]: {
+            ...currentAdj,
+            grantedLeaves: newGrantedLeaves,
+            grantedHours: newGrantedHours,
+          },
+        }));
+      }
+
+      // 4. Update the record
+      if (currentRecord.id && !currentRecord.isMissing) {
+        await updateDoc(doc(db, "punches", currentRecord.id), {
+          punchTimes,
+          inTime,
+          outTime,
+          numberOfPunches,
+          hours: totalHours,
+          isEdited: true,
+          isLeave: !!isLeave,
+          leaveType: isLeave ? leaveType : null,
+        });
+      } else {
+        await addDoc(collection(db, "punches"), {
+          employeeId: currentRecord.employeeId || "",
+          firstName: currentRecord.firstName || "",
+          email: currentRecord.email || "",
+          employee: currentRecord.employee || "Unknown",
+          department: currentRecord.department || "",
+          date: currentRecord.date,
+          punchTimes,
+          inTime,
+          outTime,
+          numberOfPunches,
+          hours: totalHours,
+          isEdited: true,
+          isLeave: !!isLeave,
+          leaveType: isLeave ? leaveType : null,
+          uploadedAt: new Date().toISOString(),
+          isManualEntry: true,
+        });
+      }
+
       message.success("Record updated");
       setEditOpen(false);
       fetchData();
     } catch (e) {
       console.error(e);
-      message.error("Update failed");
+      message.error("Update failed: " + e.message);
     }
   };
 
@@ -2304,7 +2385,6 @@ export default function AdminDashboard() {
         width: 120,
         fixed: "right",
         render: (_, r) => {
-          if (r.isMissing) return null;
           const d = dayjs(
             r.date,
             [
@@ -3148,26 +3228,64 @@ export default function AdminDashboard() {
             onCancel={() => setEditOpen(false)}
           >
             <Form layout="vertical" form={form} onFinish={handleUpdate}>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item name="isLeave" label="Is Leave" valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prevValues, currentValues) =>
+                      prevValues.isLeave !== currentValues.isLeave
+                    }
+                  >
+                    {({ getFieldValue }) =>
+                      getFieldValue("isLeave") ? (
+                        <Form.Item name="leaveType" label="Leave Type">
+                          <Select>
+                            <Select.Option value="Paid">Paid</Select.Option>
+                            <Select.Option value="Unpaid">Unpaid</Select.Option>
+                          </Select>
+                        </Form.Item>
+                      ) : null
+                    }
+                  </Form.Item>
+                </Col>
+              </Row>
+
               <Form.Item
-                name="punchTimes"
-                label="Punch Times (comma separated)"
-                rules={[
-                  { required: true },
-                  {
-                    validator: (_, value) => {
-                      const times = value
-                        .split(",")
-                        .map((t) => t.trim())
-                        .filter(Boolean);
-                      const bad = times.find((t) => !isValidTime(t));
-                      return bad
-                        ? Promise.reject(new Error(`Invalid time: ${bad}`))
-                        : Promise.resolve();
-                    },
-                  },
-                ]}
+                noStyle
+                shouldUpdate={(prevValues, currentValues) =>
+                  prevValues.isLeave !== currentValues.isLeave
+                }
               >
-                <Input placeholder="14:22, 13:50, 14:07, 21:47, 23:00" />
+                {({ getFieldValue }) =>
+                  !getFieldValue("isLeave") ? (
+                    <Form.Item
+                      name="punchTimes"
+                      label="Punch Times (comma separated)"
+                      rules={[
+                        { required: true },
+                        {
+                          validator: (_, value) => {
+                            const times = (value || "")
+                              .split(",")
+                              .map((t) => t.trim())
+                              .filter(Boolean);
+                            const bad = times.find((t) => !isValidTime(t));
+                            return bad
+                              ? Promise.reject(new Error(`Invalid time: ${bad}`))
+                              : Promise.resolve();
+                          },
+                        },
+                      ]}
+                    >
+                      <Input placeholder="09:00, 18:00" />
+                    </Form.Item>
+                  ) : null
+                }
               </Form.Item>
               <div style={{ textAlign: "right" }}>
                 <Button
