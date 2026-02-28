@@ -409,7 +409,7 @@ export default function EmployeeDashboard() {
     const currentMonthAdj = adjustments[selectedMonth.format("YYYY-MM")] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
  
     // --- GLOBAL HOURS BALANCING (User Request: Use Surplus to Fill Short Days) ---
-    // 1. Calculate Credit Bank (Surplus Hours)
+    const SHORT_DAY_TOLERANCE = 15 / 60; // 15 mins tolerance for full day
     let creditBank = 0;
     monthlyRecords.forEach(r => {
         let dailyHours = 0;
@@ -431,8 +431,21 @@ export default function EmployeeDashboard() {
         if (isWeekend || isHoliday) {
             creditBank += dailyHours;
         } else {
-            if (dailyHours > 8) {
-                creditBank += (dailyHours - 8);
+            // Weekdays: Flexible Hours Logic
+            if (dailyHours >= 8 - SHORT_DAY_TOLERANCE) {
+              // Full Day credit. Anything above 8h is surplus
+              if (dailyHours > 8) {
+                creditBank += dailyHours - 8;
+              }
+            } else if (dailyHours >= 3) {
+              // Half Day credit (Equivalent to 4h work). 
+              // Anything worked above 4h is surplus towards another day.
+              if (dailyHours > 4) {
+                creditBank += dailyHours - 4;
+              }
+            } else if (dailyHours > 0) {
+              // Absence (<3h). 0 credit given, so all worked hours are surplus.
+              creditBank += dailyHours;
             }
         }
     });
@@ -510,7 +523,7 @@ export default function EmployeeDashboard() {
               if (isWeekend || isHoliday) {
                   earned = 1;
               } else {
-                  if (hoursForPay >= 8) {
+                  if (hoursForPay >= 8 - SHORT_DAY_TOLERANCE) {
                       earned = 1;
                   } else if (hoursForPay >= 3) {
                       // Short Day Logic (3h - 8h)
@@ -608,13 +621,16 @@ export default function EmployeeDashboard() {
         const record = employeeRecords.find(r => r.date === checkDateStr); 
 
         if (!record) {
-            // Missing -> Absent ONLY if not in the future
-            return dayjs(checkDateStr).isSameOrBefore(today, 'day');
+            // Missing -> Absent ONLY if in the current month AND not in the future
+            // Fixed: We don't assume absence for missing records in DIFFERENT months (e.g. cross-month sandwich)
+            const checkDate = dayjs(checkDateStr);
+            if (checkDate.isSame(selectedMonth, 'month')) {
+                return checkDate.isSameOrBefore(today, 'day');
+            }
+            return false; // Assume not absent if missing in a different month
         }
         
-        if (record.isLeave) return true; // Explicit Leave -> Absent
-        
-        // 3-hour working threshold: < 3h is considered leave
+        // 3-hour working threshold: < 3h is considered leave (for sandwich purposes)
         let dailyHours = 0;
         if (record.punchTimes && record.punchTimes.length > 0) {
             const { totalHours } = calculateTimes(record.punchTimes);
@@ -627,7 +643,14 @@ export default function EmployeeDashboard() {
             dailyHours = h + (m / 60);
         }
         
-        if (dailyHours < 3) return true;
+        // REFINED: Even if it's marked as Leave (isLeave: true), 
+        // if they worked >= 3 hours, it is NOT an "Absence" for sandwich rule.
+        if (dailyHours < 3) {
+            // No work done, but is it a leave? 
+            if (record.isLeave) return true;
+            // Or just missing hours?
+            return true;
+        }
 
         return false;
     };
@@ -1123,9 +1146,10 @@ export default function EmployeeDashboard() {
         const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
         
         // Check if it is a holiday
-        const holidayObj = holidays.find(h => h.date === r.date);
-        const holidayName = holidayObj ? holidayObj.name : null;
-
+        const holidayEntry = holidays.find(h => h.date === r.date);
+        const holidayName = holidayEntry ? holidayEntry.name : "";
+        const isHolidayRow = !!holidayName;
+        // const presentDayCount = dailyHours >= 3 ? 1 : 0; // Keeping for logic if needed elsewhere
         // Punch parsing
         const sortedPunches = (r.punchTimes || []).sort();
         
@@ -1151,23 +1175,34 @@ export default function EmployeeDashboard() {
             isLowHoursLeave = true;
         }
         
-        const presentDayCount = dailyHours >= 3 ? 1 : 0; 
-        const weekendCheck = isWeekend ? 1 : 0;
+        const isBoosted = (payroll.boostedDates || []).includes(r.date);
         
-        return {
-           ...r,
-           fullDate: getDayOfWeek(r.date) + (holidayName ? ` - ${holidayName}` : ""),
-           sortedPunches,
-           targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
-           presentHoursFormatted: formatDuration(dailyHours),
-           hoursShortByFormatted: formatDuration(hoursShortBy),
-           presentDays: presentDayCount,
-           leaveCheck: (r.isLeave || isLowHoursLeave) ? 1 : 0,
+        const weekendCheck = isWeekend ? 1 : 0;
+                // Present Days: Correct logic for Table display
+            let earnedCredit = 0;
+            if (isWeekend || isHolidayRow) {
+                earnedCredit = 1;
+            } else if (dailyHours >= 8 - (15 / 60) || isBoosted) {
+                earnedCredit = 1;
+            } else if (dailyHours >= 3) {
+                earnedCredit = 0.5;
+            }
+
+            return {
+                ...r,
+                fullDate: getDayOfWeek(r.date) + (holidayName ? ` - ${holidayName}` : ""),
+                sortedPunches,
+                targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
+                presentHoursFormatted: formatDuration(dailyHours),
+                hoursShortByFormatted: formatDuration(hoursShortBy),
+                presentDays: earnedCredit,
+                leaveCheck: (r.isLeave || isLowHoursLeave) ? 1 : 0,
            daySwapOff: 0,
            weekendCheck,
            paidHolidays: holidayName ? 1 : 0,
            isWeekend,
-           isHolidayRow: !!holidayName
+           isHolidayRow: isHolidayRow,
+           isBoosted
         };
       });
 
@@ -1183,6 +1218,7 @@ export default function EmployeeDashboard() {
           const d = dayjs(date);
           const dayOfWeekIndex = d.day();
           const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
+          const isHoliday = holidays.some(h => h.date === date); // Check if this missing day is also a holiday
           
           return {
             id: `missing-${date}`,
@@ -1193,12 +1229,14 @@ export default function EmployeeDashboard() {
             presentHoursFormatted: "0:00:00",
             hoursShortByFormatted: isWeekend ? "0:00:00" : "8:00:00",
             presentDays: 0, // Absent
-            leaveCheck: isWeekend ? 0 : 1, // Using 1 for Absent on Weekdays
+            leaveCheck: (isWeekend || isHoliday) ? 0 : 1, // Using 1 for Absent on Weekdays, but 0 if weekend or holiday
             daySwapOff: 0,
             weekendCheck: isWeekend ? 1 : 0,
             paidHolidays: 0,
             isMissing: true,
-            isWeekend
+            isWeekend,
+            isHolidayRow: isHoliday,
+            isBoosted: false
           };
       });
       

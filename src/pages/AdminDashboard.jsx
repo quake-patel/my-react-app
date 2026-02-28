@@ -1117,6 +1117,7 @@ export default function AdminDashboard() {
       employeeId && salaries[employeeId] ? Number(salaries[employeeId]) : 30000; // We iterate through monthlyRecords to calculate earned days
     // --- GLOBAL HOURS BALANCING (User Request: Use Surplus to Fill Short Days) ---
     // 1. Calculate Credit Bank (Surplus Hours)
+    const SHORT_DAY_TOLERANCE = 15 / 60; // 15 mins tolerance for full day
     let creditBank = 0;
     monthlyRecords.forEach((r) => {
       let dailyHours = 0;
@@ -1149,12 +1150,24 @@ export default function AdminDashboard() {
         d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
       if (isWeekend || isHoliday) {
-        // All hours on weekends/holidays are surplus since Target is 0 for these days
+        // All hours on weekends/holidays are surplus since Target is 0
         creditBank += dailyHours;
       } else {
-        // For weekdays, anything above 8 is surplus
-        if (dailyHours > 8) {
-          creditBank += dailyHours - 8;
+        // Weekdays: Flexible Hours Logic
+        if (dailyHours >= 8 - SHORT_DAY_TOLERANCE) {
+          // Full Day credit. Anything above 8h is surplus
+          if (dailyHours > 8) {
+            creditBank += dailyHours - 8;
+          }
+        } else if (dailyHours >= 3) {
+          // Half Day credit (Equivalent to 4h work). 
+          // Anything worked above 4h is surplus towards another day.
+          if (dailyHours > 4) {
+            creditBank += dailyHours - 4;
+          }
+        } else if (dailyHours > 0) {
+          // Absence (<3h). 0 credit given, so all worked hours are surplus.
+          creditBank += dailyHours;
         }
       }
     });
@@ -1162,6 +1175,7 @@ export default function AdminDashboard() {
     // 2. Calculate Earned Days utilizing the Bank
     let earnedDays = 0;
     let presentDaysCount = 0;
+    let boostedDates = [];
 
     monthlyRecords.forEach((r) => {
       let dailyHours = 0;
@@ -1209,7 +1223,7 @@ export default function AdminDashboard() {
         earned = 1;
         boosted = 1;
       } else {
-        if (hoursForPay >= 8) {
+        if (hoursForPay >= 8 - SHORT_DAY_TOLERANCE) {
           earned = 1;
           boosted = 1;
         } else if (hoursForPay >= 3) {
@@ -1220,6 +1234,7 @@ export default function AdminDashboard() {
           if (creditBank >= deficit - 0.001) {
             earned = 1; // BOOSTED to Full Day
             creditBank -= deficit; // Consume surplus
+            boostedDates.push(r.date);
           } else {
             earned = 0.5; // Short Day Penalty
           }
@@ -1232,7 +1247,7 @@ export default function AdminDashboard() {
         }
       }
       earnedDays += earned;
-      boostedDays += boosted;
+      // boostedDays += boosted; // This variable is not used anywhere else, removing.
 
       if (isWeekend || isHoliday || hoursForPay >= 3) {
         presentDaysCount += 1;
@@ -1297,13 +1312,16 @@ export default function AdminDashboard() {
         const record = recordsToSearch.find(r => r.date === checkDateStr && r.employeeId === employeeId); 
 
         if (!record) {
-            // Missing -> Absent ONLY if not in the future
-            return dayjs(checkDateStr).isSameOrBefore(today, 'day');
+            // Missing -> Absent ONLY if in the current month AND not in the future
+            // Fixed: We don't assume absence for missing records in DIFFERENT months (e.g. cross-month sandwich)
+            const checkDate = dayjs(checkDateStr);
+            if (checkDate.isSame(selectedMonth, 'month')) {
+                return checkDate.isSameOrBefore(today, 'day');
+            }
+            return false; // Assume not absent if missing in a different month
         }
         
-        if (record.isLeave) return true; // Explicit Leave -> Absent
-        
-        // 3-hour working threshold: < 3h is considered leave
+        // 3-hour working threshold: < 3h is considered leave (for sandwich purposes)
         let dailyHours = 0;
         if (record.punchTimes && record.punchTimes.length > 0) {
             const { totalHours } = calculateTimes(record.punchTimes);
@@ -1316,7 +1334,14 @@ export default function AdminDashboard() {
             dailyHours = h + (m / 60);
         }
         
-        if (dailyHours < 3) return true;
+        // REFINED: Even if it's marked as Leave (isLeave: true), 
+        // if they worked >= 3 hours, it is NOT an "Absence" for sandwich rule.
+        if (dailyHours < 3) {
+            // No work done, but is it a leave? 
+            if (record.isLeave) return true;
+            // Or just missing hours?
+            return true;
+        }
 
         return false;
     };
@@ -1421,6 +1446,8 @@ export default function AdminDashboard() {
     if (presentDaysCount === 0 && paidLeavesCount === 0) {
       payableSalary = 0 + incentiveAmount; // Just incentives if any
     }
+        
+    if (payableSalary < 0) payableSalary = 0;
 
     if (payableSalary < 0) payableSalary = 0;
 
@@ -1433,6 +1460,7 @@ export default function AdminDashboard() {
       missingDays,
       shortDays, // Export for UI
       zeroDays, // Export for UI
+      boostedDates, // NEW
       totalLeaves:
         missingDays.length + zeroDays.length + leavesCount - paidLeavesCount,
       pendingWeekends,
@@ -2402,8 +2430,17 @@ export default function AdminDashboard() {
       const shortfall = targetHours - dailyHours;
       const hoursShortBy = shortfall > 0 ? shortfall : 0;
 
-      // Present Days: Days with >= 3 hours (Half Day or Full Day)
-      const presentDayCount = dailyHours >= 3 ? 1 : 0;
+      // Present Days: Based on actual credit (0.5 or 1.0)
+      const isBoosted = (payroll.boostedDates || []).includes(r.date);
+      let earnedCredit = 0;
+      const isHolidayDate = holidays.some(h => h.date === r.date);
+      if (isWeekend || isHolidayDate) {
+        earnedCredit = 1;
+      } else if (dailyHours >= 8 - (15 / 60) || isBoosted) {
+        earnedCredit = 1;
+      } else if (dailyHours >= 3) {
+        earnedCredit = 0.5;
+      }
 
       // Leave Check: Explicit Leave OR Low Hours (< 3) on a Weekday
       // Note: Weekends with < 3 hours are not leaves.
@@ -2419,7 +2456,7 @@ export default function AdminDashboard() {
         targetHoursFormatted: isWeekend ? "0:00:00" : "8:00:00",
         presentHoursFormatted: formatDuration(dailyHours),
         hoursShortByFormatted: formatDuration(hoursShortBy),
-        presentDays: presentDayCount,
+        presentDays: earnedCredit,
         leaveCheck: r.isLeave || isLowHoursLeave ? 1 : 0,
         daySwapOff: 0,
         weekendCheck: isWeekend ? 1 : 0,
@@ -2558,6 +2595,7 @@ export default function AdminDashboard() {
               const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
 
               if (isWeekend) return "weekend-row"; // We need to add styles for these or use style prop
+              if (record.isBoosted) return ""; // Boosted rows look normal
               if (dailyHours < 3) return "low-hours-row";
               return "";
             }}
@@ -2587,6 +2625,8 @@ export default function AdminDashboard() {
                 if (record.leaveType === "Paid")
                   bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed";
                 else bg = darkMode ? "#333" : "#fafafa";
+              } else if (record.isBoosted) {
+                bg = darkMode ? "rgba(183, 235, 143, 0.15)" : "#f6ffed"; // Green for Boosted
               } else if (isWeekend)
                 bg = darkMode ? "rgba(212, 177, 6, 0.15)" : "#fffbf0";
               else if (dailyHours < 3)
@@ -2905,8 +2945,20 @@ export default function AdminDashboard() {
                                     <Tag color="error">Low Hours</Tag>
                                   );
                                 } else {
-                                  // Default OK
-                                  statusTag = <Tag color="processing">OK</Tag>;
+                                  // Default OK or Boosted
+                                  if (rec.isBoosted) {
+                                    rowStyle = {
+                                      border: "1px solid #52c41a", // Green border for boosted
+                                      background: darkMode
+                                        ? "rgba(82, 196, 26, 0.1)"
+                                        : "#f6ffed", // Light green background
+                                    };
+                                    statusTag = (
+                                      <Tag color="success">Boosted (Bank)</Tag>
+                                    );
+                                  } else {
+                                    statusTag = <Tag color="processing">OK</Tag>;
+                                  }
                                 }
 
                                 if (isGranted) {
