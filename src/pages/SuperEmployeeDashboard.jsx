@@ -33,7 +33,8 @@ import {
   ClockCircleOutlined,
   PlusOutlined,
   MessageOutlined,
-  DollarOutlined
+  DollarOutlined,
+  RiseOutlined
 } from "@ant-design/icons";
 import { db, auth } from "../firebase";
 import ChatDrawer from "../components/ChatDrawer";
@@ -406,6 +407,8 @@ export default function SuperEmployeeDashboard() {
         }
     });
     const monthlyRecords = Array.from(uniqueRecordsMap.values());
+    // sort chronologically for bank calculations
+    monthlyRecords.sort((a, b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf());
     
     // Calculate Hours
     let actualHours = 0;
@@ -416,6 +419,7 @@ export default function SuperEmployeeDashboard() {
     const zeroDays = []; // NEW
     let earnedDays = 0;
     let presentDaysCount = 0;
+    const dateCredits = {}; // map of date to earned credit
     const today = dayjs();
 
 
@@ -454,11 +458,8 @@ export default function SuperEmployeeDashboard() {
                 creditBank += dailyHours - 8;
               }
             } else if (dailyHours >= 3) {
-              // Half Day credit (Equivalent to 4h work). 
-              // Anything worked above 4h is surplus towards another day.
-              if (dailyHours > 4) {
-                creditBank += dailyHours - 4;
-              }
+              // Half Day credit (3h - 8h). SHORT DAYS DO NOT contribute to bank.
+              // Only FULL days (>=8h) contribute surplus to boost other short days.
             } else if (dailyHours > 0) {
               // Absence (<3h). 0 credit given, so all worked hours are surplus.
               creditBank += dailyHours;
@@ -537,18 +538,21 @@ export default function SuperEmployeeDashboard() {
               if (hoursForPay >= 8 - SHORT_DAY_TOLERANCE) {
                   earned = 1;
               } else if (hoursForPay >= 3) {
-                  // Short Day Logic (3h - 8h)
+                  // Short Day Logic (3h - 8h): attempt boost during pass
                   const deficit = 8 - hoursForPay;
-                  // Try to cover with Bank
-                  // Use epsilon for float comparison safety
                   if (creditBank >= deficit - 0.001) {
                       earned = 1; // BOOSTED to Full Day
                       creditBank -= deficit; // Consume surplus
-                      boostedDates.push(r.date);
+                      boostedDates.push(d.format("YYYY-MM-DD"));
                   } else {
-                      earned = 0.5; // Short Day Penalty
+                      earned = 0.5; // Short Day: will retry in retro phase
                   }
               }
+          }
+
+          // record credit for this date
+          if (d.isValid()) {
+              dateCredits[d.format("YYYY-MM-DD")] = earned;
           }
 
           earnedDays += earned;
@@ -558,6 +562,43 @@ export default function SuperEmployeeDashboard() {
 
       }
     }); // End of monthlyRecords loop
+
+    // retroactively boost short days using leftover bank, smallest deficits first
+    if (creditBank > 0) {
+      const shortList = Object.keys(dateCredits)
+        .filter(d => dateCredits[d] === 0.5)
+        .map(date => {
+          const rec = monthlyRecords.find(r => dayjs(r.date).format("YYYY-MM-DD") === date);
+          if (!rec) return null;
+          let dh = 0;
+          if (rec.punchTimes && rec.punchTimes.length > 0) {
+            const { totalHours } = calculateTimes(rec.punchTimes);
+            if (totalHours) {
+              const [h, m] = totalHours.split(":").map(Number);
+              dh = h + m / 60;
+            }
+          } else if (rec.hours) {
+            const [h, m] = rec.hours.split(":").map(Number);
+            dh = h + m / 60;
+          }
+          // skip leaves (<= 3h worked): treat them as leaves
+          if (dh <= 3) return null;
+          const deficit = 8 - dh;
+          return { date, deficit };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.deficit - b.deficit);
+
+      for (const { date, deficit } of shortList) {
+        if (creditBank <= 0) break;
+        if (deficit > 0 && creditBank >= deficit - 0.001) {
+          dateCredits[date] = 1;
+          creditBank -= deficit;
+          earnedDays += 0.5;
+          presentDaysCount += 0.5;
+        }
+      }
+    }
 
     // Rule: Overtime CAP.
     // Earned Days cannot exceed Present Days count.
@@ -797,6 +838,9 @@ export default function SuperEmployeeDashboard() {
       grantedHours: currentMonthAdj.grantedHours || 0,
       grantedShortageDates: currentMonthAdj.grantedShortageDates || [],
       hasPenalty: effectivelyEarnedDays < presentDaysCount - 0.01,
+      // Per-date earned credit map for table
+      dateCredits,
+      presentDaysCount,
       // Net Earning Days Logic
       netEarningDays: daysForPay,
       daysInMonth: selectedMonth.daysInMonth(),
@@ -1250,11 +1294,12 @@ export default function SuperEmployeeDashboard() {
         const isWeekend = dayOfWeekIndex === 0 || dayOfWeekIndex === 6;
         
         // Check if it is a holiday
-        const holidayDates = holidays.map(h => h.date);
-        const holidayEntry = holidays.find(h => h.date === r.date);
+        const normalizedDate = dayjs(r.date).format("YYYY-MM-DD");
+        const holidayDates = holidays.map(h => dayjs(h.date).format("YYYY-MM-DD"));
+        const holidayEntry = holidays.find(h => dayjs(h.date).format("YYYY-MM-DD") === normalizedDate);
         const holidayName = holidayEntry ? holidayEntry.name : "";
-        const isHolidayDate = holidayDates.includes(r.date);
-        const isBoosted = (payroll.boostedDates || []).includes(r.date);
+        const isHolidayDate = holidayDates.includes(normalizedDate);
+        const isBoosted = (payroll.boostedDates || []).includes(normalizedDate);
         const sortedPunches = (r.punchTimes || []).sort();
         
         // Hours Calc
@@ -1280,15 +1325,8 @@ export default function SuperEmployeeDashboard() {
         }
         
         const weekendCheck = isWeekend ? 1 : 0;
-        // Present Days: Based on actual credit (0.5 or 1.0)
-        let earnedCredit = 0;
-        if (isWeekend || isHolidayDate) {
-            earnedCredit = 1;
-        } else if (dailyHours >= 8 - (15 / 60) || isBoosted) { // 15 minutes tolerance
-            earnedCredit = 1;
-        } else if (dailyHours >= 3) {
-            earnedCredit = 0.5;
-        }
+        // Present Days: use credit map from payroll
+        const earnedCredit = payroll.dateCredits?.[normalizedDate] || 0;
 
         return {
            ...r,
