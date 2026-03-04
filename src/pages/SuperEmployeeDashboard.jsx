@@ -417,188 +417,108 @@ export default function SuperEmployeeDashboard() {
     const recordedDates = [];
     const shortDays = []; // NEW
     const zeroDays = []; // NEW
-    let earnedDays = 0;
-    let presentDaysCount = 0;
-    const dateCredits = {}; // map of date to earned credit
-    const today = dayjs();
-
-
-
-    
-
     const currentMonthAdj = adjustments[selectedMonth.format("YYYY-MM")] || { grantedLeaves: 0, grantedHours: 0, grantedShortageDates: [] };
+    const today = dayjs();
     
-    // --- GLOBAL HOURS BALANCING (User Request: Use Surplus to Fill Short Days) ---
-    const SHORT_DAY_TOLERANCE = 15 / 60; // 15 mins tolerance for full day
-    let creditBank = 0;
-    monthlyRecords.forEach(r => {
-        let dailyHours = 0;
-        if (r.punchTimes && r.punchTimes.length > 0) {
-            const { totalHours } = calculateTimes(r.punchTimes);
-            if (totalHours) {
-                 const [h, m] = totalHours.split(":").map(Number);
-                 dailyHours = h + (m/60);
-            }
-        } else if (r.hours) {
-           const [h, m] = r.hours.split(":").map(Number);
-           dailyHours = h + (m/60);
-        }
-
-        const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
-        const isWeekend = d.day() === 0 || d.day() === 6;
-        const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
-
-        if (isWeekend || isHoliday) {
-            creditBank += dailyHours;
-        } else {
-            // Weekdays: Flexible Hours Logic
-            if (dailyHours >= 8 - SHORT_DAY_TOLERANCE) {
-              // Full Day credit. Anything above 8h is surplus
-              if (dailyHours > 8) {
-                creditBank += dailyHours - 8;
-              }
-            } else if (dailyHours >= 3) {
-              // Half Day credit (3h - 8h). SHORT DAYS DO NOT contribute to bank.
-              // Only FULL days (>=8h) contribute surplus to boost other short days.
-            } else if (dailyHours > 0) {
-              // Absence (<3h). 0 credit given, so all worked hours are surplus.
-              creditBank += dailyHours;
-            }
-        }
-    });
+    // --- GLOBAL HOURS BALANCING (User Request: Total Hours Pooling) ---
+    // 1. Calculate Total Poolable Hours (Weekdays Only)
+    let weekdayWorkedHours = 0;
     
-    let boostedDates = [];
-    monthlyRecords.forEach(r => {
+    monthlyRecords.forEach((r) => {
       let dailyHours = 0;
       if (r.punchTimes && r.punchTimes.length > 0) {
-          const { totalHours } = calculateTimes(r.punchTimes);
-          if (totalHours) {
-              const [h, m] = totalHours.split(":").map(Number);
-              dailyHours = h + (m/60);
-          }
-          // If totalHours is 0 / null, dailyHours stays 0 (don't fallback to r.hours)
+        const { totalHours } = calculateTimes(r.punchTimes);
+        if (totalHours) {
+          const [h, m] = totalHours.split(":").map(Number);
+          dailyHours = h + m / 60;
+        }
       } else if (r.hours) {
         const [h, m] = r.hours.split(":").map(Number);
-        dailyHours = h + (m/60);
+        dailyHours = h + m / 60;
       }
-      actualHours += dailyHours;
-      
+
       const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY", "MM/DD/YYYY", "DD/MM/YYYY", "YYYY/MM/DD", "MM-DD-YYYY", "D-MMM-YYYY"], false);
+      const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+      const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
-      // Apply Granted Shortage (Virtual)
+      if (!isWeekend && !isHoliday && !r.isLeave) {
+        // Apply Granted Shortage (Virtual) for weekday pooling
+        const isGranted = (currentMonthAdj.grantedShortageDates || []).includes(r.date);
+        if (isGranted && dailyHours < 8) {
+          dailyHours = 8;
+        }
+        weekdayWorkedHours += dailyHours;
+      }
+    });
+
+    // 2. Apply Pooling Rule: floor(Hours/8) + (Remainder >= 3 ? 0.5 : 0)
+    const fullDaysFromPool = Math.floor(weekdayWorkedHours / 8);
+    const remainder = weekdayWorkedHours % 8;
+    const boostedDates = []; // For UI compatibility
+    let earnedDaysFromPool = fullDaysFromPool;
+    if (remainder >= 3 - 0.001) { // Floating point tolerance
+      earnedDaysFromPool += 0.5;
+    }
+
+    // 3. Assign Credits per Date (For Table Display Consistency)
+    let presentDaysCount = 0;
+    const dateCredits = {};
+
+    monthlyRecords.forEach((r) => {
+      let dailyHours = 0;
+      if (r.punchTimes && r.punchTimes.length > 0) {
+        const { totalHours } = calculateTimes(r.punchTimes);
+        if (totalHours) {
+          const [h, m] = totalHours.split(":").map(Number);
+          dailyHours = h + m / 60;
+        }
+      } else if (r.hours) {
+        const [h, m] = r.hours.split(":").map(Number);
+        dailyHours = h + m / 60;
+      }
+
       const isGranted = (currentMonthAdj.grantedShortageDates || []).includes(r.date);
-      if (d.isValid() && isGranted && dailyHours < 8 && !r.isLeave) {
-           const shortage = 8 - dailyHours;
-           if (shortage > 0) {
-              dailyHours += shortage;
-              // Update actualHours which was already added, so add the diff
-              actualHours += shortage; 
-           }
+      if (isGranted && dailyHours < 8 && !r.isLeave) {
+        dailyHours = 8;
       }
-      if(d.isValid()) {
-          recordedDates.push(d.format("YYYY-MM-DD"));
-          const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
-          const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
-          // Rules Check - Removed 3h threshold to match AdminDashboard
-          let hoursToAdd = 0;
-          if (isWeekend) {
-              if (r.weekendApproved) {
-                  hoursToAdd = dailyHours;
-              }
-          } else {
-              hoursToAdd = dailyHours;
-          }
-          
-          eligibleHours += hoursToAdd;
-          
-          // Passed Hours
-          if (d.isSameOrBefore(today, 'day')) {
-              passedEligibleHours += hoursToAdd;
-          }
+      const d = dayjs(r.date, ["YYYY-MM-DD", "DD-MM-YYYY"], false);
+      const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
+      const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
-          if (!isWeekend && !r.isLeave && dailyHours < 8) {
-              const normalizedDate = d.format("YYYY-MM-DD");
-              if (dailyHours < 3) {
-                  zeroDays.push({ date: normalizedDate, dailyHours, shortage: 8 - dailyHours });
-              } else {
-                  shortDays.push({ date: normalizedDate, dailyHours, shortage: 8 - dailyHours });
-              }
-          }
-
-          // Salary Calculation Logic Integration (Calculated per record loop)
-          let hoursForPay = dailyHours;
-          
-          // Calculate Worked Days (Discrete Logic)
-          // SPECIAL RULE: Weekends and Holidays always give 1.0 credit if worked/recorded
-          let earned = 0;
-          if (isWeekend || isHoliday) {
-              earned = 1;
-          } else {
-              if (hoursForPay >= 8 - SHORT_DAY_TOLERANCE) {
-                  earned = 1;
-              } else if (hoursForPay >= 3) {
-                  // Short Day Logic (3h - 8h): attempt boost during pass
-                  const deficit = 8 - hoursForPay;
-                  if (creditBank >= deficit - 0.001) {
-                      earned = 1; // BOOSTED to Full Day
-                      creditBank -= deficit; // Consume surplus
-                      boostedDates.push(d.format("YYYY-MM-DD"));
-                  } else {
-                      earned = 0.5; // Short Day: will retry in retro phase
-                  }
-              }
-          }
-
-          // record credit for this date
-          if (d.isValid()) {
-              dateCredits[d.format("YYYY-MM-DD")] = earned;
-          }
-
-          earnedDays += earned;
-          if (isWeekend || isHoliday || hoursForPay >= 3) {
-             presentDaysCount += 1;
-          }
-
-      }
-    }); // End of monthlyRecords loop
-
-    // retroactively boost short days using leftover bank, smallest deficits first
-    if (creditBank > 0) {
-      const shortList = Object.keys(dateCredits)
-        .filter(d => dateCredits[d] === 0.5)
-        .map(date => {
-          const rec = monthlyRecords.find(r => dayjs(r.date).format("YYYY-MM-DD") === date);
-          if (!rec) return null;
-          let dh = 0;
-          if (rec.punchTimes && rec.punchTimes.length > 0) {
-            const { totalHours } = calculateTimes(rec.punchTimes);
-            if (totalHours) {
-              const [h, m] = totalHours.split(":").map(Number);
-              dh = h + m / 60;
-            }
-          } else if (rec.hours) {
-            const [h, m] = rec.hours.split(":").map(Number);
-            dh = h + m / 60;
-          }
-          // skip leaves (<= 3h worked): treat them as leaves
-          if (dh <= 3) return null;
-          const deficit = 8 - dh;
-          return { date, deficit };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.deficit - b.deficit);
-
-      for (const { date, deficit } of shortList) {
-        if (creditBank <= 0) break;
-        if (deficit > 0 && creditBank >= deficit - 0.001) {
-          dateCredits[date] = 1;
-          creditBank -= deficit;
-          earnedDays += 0.5;
-          presentDaysCount += 0.5;
+      let earned = 0;
+      if (isWeekend || isHoliday) {
+        earned = 1; // Fixed credit for worked weekends/holidays
+      } else if (!r.isLeave) {
+        // Individual day credit follow simple 3h/8h rule for DISPLAY
+        if (dailyHours >= 8 - (15 / 60)) {
+          earned = 1;
+        } else if (dailyHours >= 3) {
+          earned = 0.5;
         }
       }
-    }
+
+      const creditKey = d.format("YYYY-MM-DD");
+      dateCredits[creditKey] = earned;
+
+      if (isWeekend || isHoliday || (dailyHours >= 3 && !r.isLeave)) {
+        presentDaysCount += 1;
+      }
+    });
+
+    // Final "Earned Days" for summary uses the POOLED value for weekdays
+    // plus any extra days from weekends/holidays (if worked)
+    let extraWorkedDays = 0;
+    Object.keys(dateCredits).forEach(date => {
+        const d = dayjs(date);
+        const isWeekend = d.day() === 0 || d.day() === 6;
+        const isHoliday = holidayDates.includes(date);
+        if ((isWeekend || isHoliday) && dateCredits[date] > 0) {
+            extraWorkedDays += dateCredits[date];
+        }
+    });
+
+    let effectivelyEarnedDays = earnedDaysFromPool + extraWorkedDays;
 
     // Rule: Overtime CAP.
     // Earned Days cannot exceed Present Days count.
@@ -694,7 +614,10 @@ export default function SuperEmployeeDashboard() {
         // REFINED: Even if it's marked as Leave (isLeave: true), 
         // if they worked >= 3 hours, it is NOT an "Absence" for sandwich rule.
         if (dailyHours < 3) {
-            // No work done, but is it a leave? 
+            // Refined: If it's a PAID leave, it's NOT an absence for sandwich purposes
+            if (record.isLeave && record.leaveType?.toLowerCase() === "paid") return false;
+
+            // No work done, but is it a leave? (Unpaid)
             if (record.isLeave) return true;
             // Or just missing hours?
             return true;
@@ -774,7 +697,6 @@ export default function SuperEmployeeDashboard() {
     // Rule: Earned Days + Unworked Weekend + Unworked Holidays - Sandwich Deductions + Paid Leaves
     
     // Fix for "High Hours but Low Days"
-    let effectivelyEarnedDays = earnedDays;
     
     // STRICT LOGIC RESTORED:
     // 1 Full Day = 1.0
@@ -787,15 +709,20 @@ export default function SuperEmployeeDashboard() {
     // effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount); // DISABLED to match Admin Strict Logic
 
     // New Formula: (Present Days + Unworked Weekends + Unworked Holidays)
-    let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount;
+    let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount;
     
+    // Calculate Billable Days (Denominator)
+    const daysInCurrentMonth = selectedMonth.daysInMonth();
+
     // ADJUST FOR SANDWICH
     daysForPay -= sandwichDeduction;
 
-    // APPLY GRANTED LEAVES (User Adjustment)
+    // Safety Cap: Net Earned cannot exceed total days in month
+    if (daysForPay > daysInCurrentMonth) {
+        daysForPay = daysInCurrentMonth;
+    }
 
-    // Calculate Billable Days (Denominator)
-    const daysInCurrentMonth = selectedMonth.daysInMonth();
+    // APPLY GRANTED LEAVES (User Adjustment)
     const monthlySalary = (currentUserSalary && currentUserSalary > 0) ? currentUserSalary : 30000;
     const dailyRate = monthlySalary / daysInCurrentMonth;
     
@@ -844,7 +771,7 @@ export default function SuperEmployeeDashboard() {
       // Net Earning Days Logic
       netEarningDays: daysForPay,
       daysInMonth: selectedMonth.daysInMonth(),
-      creditBank, // Export creditBank
+      creditBank: remainder, // Export pooled remainder as Bank
     };
   };
 
@@ -1342,7 +1269,7 @@ export default function SuperEmployeeDashboard() {
            paidHolidays: holidayName ? 1 : 0,
            isWeekend,
            isHolidayRow: !!holidayName,
-           isBoosted
+           isBoosted: isBoosted
         };
       });
 
