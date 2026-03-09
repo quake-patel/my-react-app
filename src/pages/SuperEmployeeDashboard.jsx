@@ -425,6 +425,7 @@ export default function SuperEmployeeDashboard() {
     let weekdayWorkedHours = 0;
     
     monthlyRecords.forEach((r) => {
+      recordedDates.push(r.date); // FIX: Populate recordedDates
       let dailyHours = 0;
       if (r.punchTimes && r.punchTimes.length > 0) {
         const { totalHours } = calculateTimes(r.punchTimes);
@@ -451,14 +452,11 @@ export default function SuperEmployeeDashboard() {
       }
     });
 
-    // 2. Apply Pooling Rule: floor(Hours/8) + (Remainder >= 3 ? 0.5 : 0)
+    // 2. Apply Pooling Rule: floor(Hours/8) (Remainder is kept in Bank)
     const fullDaysFromPool = Math.floor(weekdayWorkedHours / 8);
     const remainder = weekdayWorkedHours % 8;
     const boostedDates = []; // For UI compatibility
     let earnedDaysFromPool = fullDaysFromPool;
-    if (remainder >= 3 - 0.001) { // Floating point tolerance
-      earnedDaysFromPool += 0.5;
-    }
 
     // 3. Assign Credits per Date (For Table Display Consistency)
     let presentDaysCount = 0;
@@ -519,6 +517,9 @@ export default function SuperEmployeeDashboard() {
     });
 
     let effectivelyEarnedDays = earnedDaysFromPool + extraWorkedDays;
+
+    // 4. Calculate for Pay (Includes Bank fractional hours)
+    const effectivelyPayableDays = effectivelyEarnedDays + (remainder / 8);
 
     // Rule: Overtime CAP.
     // Earned Days cannot exceed Present Days count.
@@ -709,7 +710,7 @@ export default function SuperEmployeeDashboard() {
     // effectivelyEarnedDays = Math.min(effectivelyEarnedDays, presentDaysCount); // DISABLED to match Admin Strict Logic
 
     // New Formula: (Present Days + Unworked Weekends + Unworked Holidays)
-    let daysForPay = effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount;
+    let daysForPay = effectivelyPayableDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount;
     
     // Calculate Billable Days (Denominator)
     const daysInCurrentMonth = selectedMonth.daysInMonth();
@@ -769,7 +770,7 @@ export default function SuperEmployeeDashboard() {
       dateCredits,
       presentDaysCount,
       // Net Earning Days Logic
-      netEarningDays: daysForPay,
+      netEarningDays: effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount - sandwichDeduction,
       daysInMonth: selectedMonth.daysInMonth(),
       creditBank: remainder, // Export pooled remainder as Bank
     };

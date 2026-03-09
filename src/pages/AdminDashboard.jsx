@@ -1131,6 +1131,7 @@ export default function AdminDashboard() {
     const boostedDates = []; // For UI compatibility
 
     monthlyRecords.forEach((r) => {
+      recordedDates.push(r.date); // FIX: Populate recordedDates
       let dailyHours = 0;
       if (r.punchTimes && r.punchTimes.length > 0) {
         const { totalHours } = calculateTimes(r.punchTimes);
@@ -1170,14 +1171,10 @@ export default function AdminDashboard() {
       }
     });
 
-    // 2. Apply Pooling Rule: floor(Hours/8) + (Remainder >= 3 ? 0.5 : 0)
+    // 2. Apply Pooling Rule: floor(Hours/8) (Remainder is kept in Bank)
     const fullDaysFromPool = Math.floor(weekdayWorkedHours / 8);
     const remainder = weekdayWorkedHours % 8;
     let earnedDaysFromPool = fullDaysFromPool;
-    if (remainder >= 3 - 0.001) {
-      // Floating point tolerance
-      earnedDaysFromPool += 0.5;
-    }
 
     // 3. Assign Credits per Date (For Table Display Consistency)
     let presentDaysCount = 0;
@@ -1239,6 +1236,9 @@ export default function AdminDashboard() {
     });
 
     let effectivelyEarnedDays = earnedDaysFromPool + extraWorkedDays;
+
+    // 4. Calculate for Pay (Includes Bank fractional hours)
+    const effectivelyPayableDays = effectivelyEarnedDays + (remainder / 8);
 
     // Incentive Calculation
     const incentiveKey = `${employeeId}_${monthStr}`;
@@ -1414,7 +1414,7 @@ export default function AdminDashboard() {
     // Result: Total Days = Days In Month (if fully attended).
     // Absences are reflected by missing from "Present Days" and not being in "Unworked" (since they are working days).
     let daysForPay =
-      effectivelyEarnedDays +
+      effectivelyPayableDays +
       unworkedWeekendCount +
       unworkedHolidayCount +
       paidLeavesCount;
@@ -1488,7 +1488,7 @@ export default function AdminDashboard() {
       presentDaysCount,
       // Net Earning Days Logic
       // Updated to match Employee/SuperEmployee Logic: Use Calculated Days for Pay
-      netEarningDays: daysForPay,
+      netEarningDays: effectivelyEarnedDays + unworkedWeekendCount + unworkedHolidayCount + paidLeavesCount - sandwichDeduction,
       daysInMonth: selectedMonth.daysInMonth(),
       creditBank: remainder, // Use pooled remainder as Bank
     };
