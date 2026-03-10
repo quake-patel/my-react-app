@@ -1128,6 +1128,7 @@ export default function AdminDashboard() {
     // --- GLOBAL HOURS BALANCING (User Request: Total Hours Pooling) ---
     // 1. Calculate Total Poolable Hours (Weekdays Only)
     let weekdayWorkedHours = 0;
+    let weekdayPresentCount = 0; // NEW: Cap for pooled days
     const boostedDates = []; // For UI compatibility
 
     monthlyRecords.forEach((r) => {
@@ -1168,13 +1169,27 @@ export default function AdminDashboard() {
           dailyHours = 8;
         }
         weekdayWorkedHours += dailyHours;
+        if (dailyHours >= 3) {
+          weekdayPresentCount += 1;
+        }
       }
     });
 
-    // 2. Apply Pooling Rule: floor(Hours/8) (Remainder is kept in Bank)
-    const fullDaysFromPool = Math.floor(weekdayWorkedHours / 8);
-    const remainder = weekdayWorkedHours % 8;
-    let earnedDaysFromPool = fullDaysFromPool;
+    // 2. Apply Pooling Rule: floor(Hours/8) + 0.5 if remainder >= 3h (Capped by Weekday Attendance)
+    let earnedDaysFromPool = Math.floor(weekdayWorkedHours / 8);
+    const rawRemainder = weekdayWorkedHours % 8;
+    
+    // If leftover hours >= 3, count as 0.5 day
+    if (rawRemainder >= 3) {
+      earnedDaysFromPool += 0.5;
+    }
+    
+    // NEW: Cap by actual weekday presence (cannot earn credit for leave days)
+    earnedDaysFromPool = Math.min(earnedDaysFromPool, weekdayPresentCount);
+    
+    // The "Bank" is whatever is left after subtracting the earned pooled days
+    const adjustedRemainder = weekdayWorkedHours - (earnedDaysFromPool * 8);
+    const remainder = adjustedRemainder; // For compatibility with existing remainder usage
 
     // 3. Assign Credits per Date (For Table Display Consistency)
     let presentDaysCount = 0;
