@@ -429,6 +429,23 @@ export default function EmployeeDashboard() {
       const isWeekend = d.isValid() && (d.day() === 0 || d.day() === 6);
       const isHoliday = d.isValid() && holidayDates.includes(d.format("YYYY-MM-DD"));
 
+      actualHours += dailyHours;
+
+      let hoursToAdd = 0;
+      if (isWeekend) {
+        if (r.weekendApproved) {
+          hoursToAdd = dailyHours;
+        }
+      } else {
+        hoursToAdd = dailyHours;
+      }
+
+      eligibleHours += hoursToAdd;
+
+      if (d.isValid() && d.isSameOrBefore(today, "day")) {
+        passedEligibleHours += hoursToAdd;
+      }
+
       if (!isWeekend && !isHoliday && !r.isLeave) {
         // Apply Granted Shortage (Virtual) for weekday pooling
         const isGranted = (currentMonthAdj.grantedShortageDates || []).includes(r.date);
